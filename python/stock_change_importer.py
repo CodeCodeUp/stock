@@ -77,11 +77,7 @@ def fetch_filtered_data(latest_date):
 
 # 判断增减持类型
 def parse_change_type(share: float) -> str:
-    if share < 0:
-        return "减持"
-    if share > 0:
-        return "增持"
-    return "不变"
+    return "减持" if share < 0 else "增持"
 
 
 # 规范化数据
@@ -166,7 +162,7 @@ def update_stock_base():
 
 
 # 主流程
-if __name__ == "__main__":
+def run_importer():
     try:
         logging.info("=== Daily Stock Change Script Started ===")
         latest_date = get_latest_trade_date()
@@ -180,3 +176,7 @@ if __name__ == "__main__":
         logging.info("=== Script Completed Successfully ===")
     except Exception:
         logging.exception("An error occurred during execution.")
+
+
+if __name__ == "__main__":
+    run_importer()

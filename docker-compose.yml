@@ -31,6 +31,20 @@ services:
       DB_NAME: ${DB_NAME:-stock}
     restart: unless-stopped
 
+  data-scheduler:
+    build: ./python
+    command: ["python", "scheduler.py"]
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-stock}
+      SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-Asia/Shanghai}
+      ENABLE_IMPORTER: ${ENABLE_IMPORTER:-true}
+      ENABLE_PRICE_TRACKING: ${ENABLE_PRICE_TRACKING:-true}
+    restart: unless-stopped
+
 # Use external network to reach host MySQL, or set DB_HOST to host IP
 # If MySQL runs in another compose project, use:
 #   networks:

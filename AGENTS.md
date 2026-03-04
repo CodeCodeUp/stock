@@ -8,13 +8,13 @@
 stock/
 ├── frontend/           # Vue 3 + TypeScript 前端 (Vite, nginx)
 ├── backend/            # Spring Boot 3.4.5 后端 (Maven, Java 17)
-├── python/             # Python 数据采集 (Flask API + akshare 脚本)
-├── docker-compose.yml  # 编排: frontend + backend + data-api
+├── python/             # Python 数据采集 (Flask API + 脚本 + APScheduler)
+├── docker-compose.yml  # 编排: frontend + backend + data-api + data-scheduler
 ├── .env.example        # 环境变量模板 (DB 连接等)
 └── AGENTS.md
 ```
 
-单一 Git 仓库，三个服务通过 Docker Compose 统一编排，MySQL 由外部提供。
+单一 Git 仓库，四个服务通过 Docker Compose 统一编排，MySQL 由外部提供。
 
 ## 构建 / 运行 / 测试命令
 
@@ -26,6 +26,10 @@ docker compose up -d --build  # 构建并启动全部服务
 docker compose logs -f        # 查看日志
 docker compose down           # 停止
 ```
+
+定时任务默认开启（`data-scheduler`）：
+- 工作日 09:05,09:35,10:05,10:35,11:05,11:35,13:05,13:35,14:05,14:35,15:05 运行价格追踪
+- 工作日 18:10 运行增减持导入
 
 数据采集脚本手动执行：
 ```bash
@@ -89,6 +93,9 @@ python stock_price_tracking.py      # 运行价格追踪采集
 | `VITE_API_BASE_URL` | 前端 API 地址 (开发用) | 空 (生产走 nginx 代理) |
 | `DATA_API_URL` | 后端访问 Python API 地址 | `http://localhost:5000` |
 | `DATA_API_PORT` | Python API 容器监听端口 | `5000` |
+| `SCHEDULER_TIMEZONE` | 定时任务时区 | `Asia/Shanghai` |
+| `ENABLE_IMPORTER` | 是否启用增减持定时导入 | `true` |
+| `ENABLE_PRICE_TRACKING` | 是否启用价格追踪定时采集 | `true` |
 
 ## 代码风格
 

@@ -191,7 +191,7 @@ def get_price(code, begin):
         logging.exception(f'{code} 获取数据异常, 数据: {quote}')
 
 
-if __name__ == '__main__':
+def run_price_tracking():
     logging.info('开始获取价格跟踪数据')
     stock_df = fetch_stock_list()
     if stock_df.empty:
@@ -206,3 +206,7 @@ if __name__ == '__main__':
             logging.info(f'{code} 数据获取完成')
 
     logging.info('价格跟踪任务完成')
+
+
+if __name__ == '__main__':
+    run_price_tracking()
