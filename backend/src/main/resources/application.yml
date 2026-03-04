@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: brich
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/stock?useSSL=false&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+mybatis:
+  mapper-locations: classpath:mapper/**/*.xml
+  type-aliases-package: com.example.brich.model
+  configuration:
+    map-underscore-to-camel-case: true
+
+data-api:
+  url: ${DATA_API_URL:http://localhost:5000}

@@ -1,0 +1,28 @@
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.log
+
+# Backend
+backend/target/
+backend/*.log
+
+# Python
+python/__pycache__/
+python/*.pyc
+python/*.log
+
+# Logs
+*.log
