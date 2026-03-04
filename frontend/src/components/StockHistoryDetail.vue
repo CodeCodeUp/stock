@@ -4,14 +4,12 @@
     :title="`${stockName} (${stockCode}) 所有历史数据`"
     width="80%"
     destroy-on-close
-    :z-index="3000"
     append-to-body
     :modal="true"
-    class="stock-history-dialog"
   >
     <div v-loading="loading">
       <div class="history-chart-container">
-        <div id="history-chart" class="history-chart"></div>
+        <div ref="chartRef" class="history-chart"></div>
       </div>
 
       <div
@@ -45,29 +43,84 @@
 </template>
 
 <script lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { defineComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { fetchStockHistoryDetail } from '@/services/stockApi'
 import { prepareChartData, createChartOption, initChart } from '@/utils/chart'
 import { formatNumber } from '@/utils/formatters'
 import type { StockDetailData } from '@/types/stock'
 
-export default {
+export default defineComponent({
   name: 'StockHistoryDetail',
   props: {
-    visible: Boolean,
-    stockCode: String,
-    stockName: String,
-    changerNames: String,
+    visible: {
+      type: Boolean,
+      required: true,
+    },
+    stockCode: {
+      type: String,
+      required: true,
+    },
+    stockName: {
+      type: String,
+      required: true,
+    },
+    changerNames: {
+      type: String,
+      default: '',
+    },
   },
   emits: ['update:visible'],
   setup(props, { emit }) {
     const dialogVisible = ref(false)
     const loading = ref(false)
     const stockDetail = ref<StockDetailData | null>(null)
+    const chartRef = ref<HTMLElement | null>(null)
     let chartInstance: echarts.ECharts | null = null
 
-    // Watch visible property changes
+    const cleanupChart = () => {
+      if (chartInstance) {
+        chartInstance.dispose()
+        chartInstance = null
+      }
+    }
+
+    const initHistoryChart = () => {
+      if (!stockDetail.value || !stockDetail.value.priceData || !chartRef.value) {
+        return
+      }
+
+      cleanupChart()
+
+      const { dates, prices, markData } = prepareChartData(stockDetail.value)
+      const title = `${props.stockName} (${props.stockCode}) 价格走势`
+      const option = createChartOption(title, dates, prices, markData)
+
+      chartInstance = initChart(chartRef.value, option)
+    }
+
+    const fetchHistoryData = async () => {
+      if (!props.stockCode) return
+
+      loading.value = true
+      try {
+        stockDetail.value = await fetchStockHistoryDetail(props.stockCode, props.changerNames)
+        nextTick(() => {
+          initHistoryChart()
+        })
+      } catch {
+        stockDetail.value = null
+      } finally {
+        loading.value = false
+      }
+    }
+
+    const handleResize = () => {
+      if (chartInstance) {
+        chartInstance.resize()
+      }
+    }
+
     watch(
       () => props.visible,
       (newValue) => {
@@ -76,81 +129,37 @@ export default {
           fetchHistoryData()
         }
       },
+      { immediate: true },
     )
 
-    // Watch dialog close
     watch(
       () => dialogVisible.value,
       (newValue) => {
         if (!newValue) {
           emit('update:visible', false)
+          cleanupChart()
         }
       },
     )
 
-    const fetchHistoryData = async () => {
-      if (!props.stockCode) return
-
-      loading.value = true
-      try {
-        const data = await fetchStockHistoryDetail(props.stockCode, props.changerNames)
-        stockDetail.value = data
-
-        nextTick(() => {
-          initHistoryChart()
-        })
-      } catch (error) {
-        console.error('Failed to fetch history data:', error)
-        stockDetail.value = null
-      } finally {
-        loading.value = false
-      }
-    }
-
-    const initHistoryChart = () => {
-      if (!stockDetail.value || !stockDetail.value.priceData) return
-
-      const chartDom = document.getElementById('history-chart')
-      if (!chartDom) {
-        console.error('Chart container does not exist')
-        return
-      }
-
-      // Dispose old chart instance
-      if (chartInstance) {
-        chartInstance.dispose()
-      }
-
-      // Prepare chart data
-      const { dates, prices, markData } = prepareChartData(stockDetail.value)
-
-      // Create chart option
-      const title = `${props.stockName} (${props.stockCode}) 价格走势`
-      const option = createChartOption(title, dates, prices, markData)
-
-      // Initialize chart
-      chartInstance = initChart(chartDom, option)
-    }
-
-    // Handle window resize
-    const handleResize = () => {
-      if (chartInstance) {
-        chartInstance.resize()
-      }
-    }
-
     onMounted(() => {
       window.addEventListener('resize', handleResize)
+    })
+
+    onUnmounted(() => {
+      window.removeEventListener('resize', handleResize)
+      cleanupChart()
     })
 
     return {
       dialogVisible,
       loading,
       stockDetail,
+      chartRef,
       formatNumber,
     }
   },
-}
+})
 </script>
 
 <style scoped>
@@ -184,25 +193,5 @@ export default {
 .decrease {
   color: #67c23a;
   font-weight: 600;
-}
-</style>
-
-<style>
-/* Global styles for the dialog to ensure proper z-index layering */
-.stock-history-dialog {
-  z-index: 3000 !important;
-}
-
-.stock-history-dialog .el-dialog {
-  z-index: 3000 !important;
-}
-
-.stock-history-dialog .el-overlay {
-  z-index: 2999 !important;
-}
-
-/* Ensure the dialog appears above all other elements */
-.el-dialog__wrapper.stock-history-dialog {
-  z-index: 3000 !important;
 }
 </style>

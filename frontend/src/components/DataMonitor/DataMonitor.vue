@@ -49,7 +49,7 @@
 
           <div class="filter-item">
             <el-button type="primary" @click="fetchData" :loading="loading" class="search-button">
-              <el-icon><Search /></el-icon>
+              <el-icon><SearchIcon /></el-icon>
               搜索
             </el-button>
           </div>
@@ -64,7 +64,6 @@
       :current-page="currentPage"
       :page-size="pageSize"
       :total-count="totalCount"
-      :stock-data="stockData"
       @expand-change="handleExpandChange"
       @sort-change="handleSortChange"
       @size-change="handleSizeChange"
@@ -75,7 +74,7 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
-import { Search } from '@element-plus/icons-vue'
+import { Search as SearchIcon } from '@element-plus/icons-vue'
 import { useStockData } from '@/composables/useStockData'
 import { useChart } from '@/composables/useChart'
 import StockTable from './StockTable.vue'
@@ -84,7 +83,7 @@ export default defineComponent({
   name: 'DataMonitor',
   components: {
     StockTable,
-    Search,
+    SearchIcon,
   },
   setup() {
     // Use composables

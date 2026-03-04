@@ -16,12 +16,14 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://${DB_HOST}:${DB_PORT:-3306}/${DB_NAME:-stock}?useSSL=false&characterEncoding=utf8&serverTimezone=Asia/Shanghai
       SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
-      DATA_API_URL: http://data-api:5000
+      DATA_API_URL: http://data-api:${DATA_API_PORT:-5000}
     restart: unless-stopped
 
   data-api:
     build: ./python
     environment:
+      DATA_API_HOST: 0.0.0.0
+      DATA_API_PORT: ${DATA_API_PORT:-5000}
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT:-3306}
       DB_USER: ${DB_USER}

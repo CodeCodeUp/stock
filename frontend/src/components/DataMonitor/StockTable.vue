@@ -6,9 +6,9 @@
       style="width: 100%"
       :header-cell-style="headerStyle"
       v-loading="loading"
-      @expand-change="$emit('expand-change', $event)"
-      @sort-change="$emit('sort-change', $event)"
-      :row-key="(row: any) => row.stockCode + row.tradeDate"
+      @expand-change="handleExpandChange"
+      @sort-change="handleSortChange"
+      :row-key="rowKey"
     >
       <el-table-column type="expand">
         <template #default="props">
@@ -36,17 +36,17 @@
     <!-- Pagination -->
     <div class="pagination-container" v-if="totalCount > 0">
       <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
+        :current-page="currentPage"
+        :page-size="pageSize"
         :page-sizes="[10, 20, 50, 100]"
         layout="total, sizes, prev, pager, next, jumper"
         :total="totalCount"
-        @size-change="$emit('size-change', $event)"
-        @current-change="$emit('current-change', $event)"
+        @size-change="handleSizeChange"
+        @current-change="handleCurrentChange"
       />
     </div>
 
-    <div class="empty-data" v-if="stockData.length === 0 && !loading">
+    <div class="empty-data" v-if="totalCount === 0 && !loading">
       <el-empty description="暂无数据，请选择日期范围查询" />
     </div>
   </div>
@@ -55,7 +55,7 @@
 <script lang="ts">
 import { defineComponent, type PropType } from 'vue'
 import { formatNumber } from '@/utils/formatters'
-import type { StockDataItem, TableHeaderStyle } from '@/types/stock'
+import type { SortColumn, StockDataItem, TableHeaderStyle } from '@/types/stock'
 import StockChart from './StockChart.vue'
 
 export default defineComponent({
@@ -88,15 +88,34 @@ export default defineComponent({
       type: Number,
       required: true,
     },
-    stockData: {
-      type: Array as PropType<StockDataItem[]>,
-      required: true,
-    },
   },
   emits: ['expand-change', 'sort-change', 'size-change', 'current-change'],
-  setup() {
+  setup(_, { emit }) {
+    const rowKey = (row: StockDataItem) => `${row.stockCode}-${row.tradeDate}`
+
+    const handleExpandChange = (row: StockDataItem, expandedRows: StockDataItem[]) => {
+      emit('expand-change', row, expandedRows)
+    }
+
+    const handleSortChange = (column: SortColumn) => {
+      emit('sort-change', column)
+    }
+
+    const handleSizeChange = (size: number) => {
+      emit('size-change', size)
+    }
+
+    const handleCurrentChange = (page: number) => {
+      emit('current-change', page)
+    }
+
     return {
       formatNumber,
+      rowKey,
+      handleExpandChange,
+      handleSortChange,
+      handleSizeChange,
+      handleCurrentChange,
     }
   },
 })

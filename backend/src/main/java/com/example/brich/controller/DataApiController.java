@@ -3,12 +3,15 @@ package com.example.brich.controller;
 import com.example.brich.model.AggregatedChangeDto;
 import com.example.brich.model.PricePointDto;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -18,9 +21,11 @@ import java.text.SimpleDateFormat;
 @RequestMapping("/data/api")
 public class DataApiController {
 
-    private final static String URL = "116.205.244.106:5000";
-    private final static String ALL = "/stock_hold_management";
-    private final static String DETAIL = "/stock_hist_day";
+    @Value("${data-api.url:http://localhost:5000}")
+    private String dataApiUrl;
+
+    private static final String HOLD_PATH = "/stock_hold_management";
+    private static final String HIST_PATH = "/stock_hist_day";
 
     @Autowired
     private RestTemplate restTemplate;
@@ -38,7 +43,11 @@ public class DataApiController {
 
             // 对每个名称调用API并合并结果
             for (String singleName : names) {
-                String holdUrl = "http://" + URL + ALL + "?name=" + singleName.trim() + "&code=" + code;
+                String holdUrl = UriComponentsBuilder
+                        .fromHttpUrl(buildDataApiBaseUrl() + HOLD_PATH)
+                        .queryParam("name", singleName.trim())
+                        .queryParam("code", code)
+                        .toUriString();
                 List<Map<String, Object>> currentHoldData = restTemplate.getForObject(holdUrl, List.class);
                 if (currentHoldData != null && !currentHoldData.isEmpty()) {
                     allHoldData.addAll(currentHoldData);
@@ -54,7 +63,11 @@ public class DataApiController {
             String begin = getBeginDateFromHoldData(allHoldData);
 
             // 调用第二个API获取股票历史价格
-            String histUrl = "http://" + URL + DETAIL + "?begin=" + begin + "&code=" + code;
+            String histUrl = UriComponentsBuilder
+                    .fromHttpUrl(buildDataApiBaseUrl() + HIST_PATH)
+                    .queryParam("begin", begin)
+                    .queryParam("code", code)
+                    .toUriString();
             List<Map<String, Object>> histData = restTemplate.getForObject(histUrl, List.class);
 
             // 转换数据
@@ -75,7 +88,7 @@ public class DataApiController {
     private String getBeginDateFromHoldData(List<Map<String, Object>> holdData) {
         if (holdData == null || holdData.isEmpty()) {
             // 如果没有数据，返回当前日期
-            return LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+            return LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         }
 
         // 找到最新的一条记录（最后一天）
@@ -84,6 +97,7 @@ public class DataApiController {
                     String dateStr = (String) item.get("日期");
                     return parseDateTime(dateStr);
                 })
+                .filter(Objects::nonNull)
                 .min(LocalDateTime::compareTo)
                 .orElse(LocalDateTime.now());
 
@@ -100,6 +114,9 @@ public class DataApiController {
             // 日期格式转换
             String dateStr = (String) item.get("日期");
             LocalDateTime trackTime = parseDateTime(dateStr);
+            if (trackTime == null) {
+                return null;
+            }
             dto.setTrackTime(trackTime);
 
             // 收盘价作为当前价格
@@ -111,7 +128,7 @@ public class DataApiController {
             }
 
             return dto;
-        }).collect(Collectors.toList());
+        }).filter(Objects::nonNull).collect(Collectors.toList());
     }
 
     private List<AggregatedChangeDto> convertToMarks(List<Map<String, Object>> holdData) {
@@ -126,7 +143,11 @@ public class DataApiController {
 
             // 日期转换
             String dateStr = (String) item.get("日期");
-            LocalDate tradeDate = parseDateTime(dateStr).toLocalDate();
+            LocalDateTime parsedDate = parseDateTime(dateStr);
+            if (parsedDate == null) {
+                return null;
+            }
+            LocalDate tradeDate = parsedDate.toLocalDate();
             dto.setTradeDate(tradeDate);
 
             // 变动类型判断
@@ -148,17 +169,25 @@ public class DataApiController {
             dto.setPrice(String.valueOf(item.get("成交均价")));
 
             return dto;
-        }).collect(Collectors.toList());
+        }).filter(Objects::nonNull).collect(Collectors.toList());
     }
 
     private LocalDateTime parseDateTime(String dateStr) {
+        if (dateStr == null || dateStr.isBlank()) {
+            return null;
+        }
+
         try {
             // 转换格式如："Mon, 19 May 2025 00:00:00 GMT"
             SimpleDateFormat sdf = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US);
             Date date = sdf.parse(dateStr);
             return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
         } catch (Exception e) {
-            return LocalDateTime.now(); // 解析失败时返回当前时间
+            return null;
         }
+    }
+
+    private String buildDataApiBaseUrl() {
+        return dataApiUrl.endsWith("/") ? dataApiUrl.substring(0, dataApiUrl.length() - 1) : dataApiUrl;
     }
 }

@@ -1,125 +1,208 @@
 import logging
-from datetime import datetime
-import pandas as pd
+import os
+
 import akshare as ak
-from sqlalchemy import create_engine, text  # 新增导入
+import pandas as pd
+from sqlalchemy import create_engine, text
 
-# 日志配置
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    filename='price_tracking.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='price_tracking.log',
+)
 
-# 数据库配置
 DB_CONFIG = {
-    'host': '116.205.244.106',
-    'user': 'root',
-    'password': '202358hjq',
-    'database': 'stock',
-    'charset': 'utf8mb4'
+    'host': os.getenv('DB_HOST', 'host.docker.internal'),
+    'port': int(os.getenv('DB_PORT', '3306')),
+    'user': os.getenv('DB_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD', ''),
+    'database': os.getenv('DB_NAME', 'stock'),
+    'charset': os.getenv('DB_CHARSET', 'utf8mb4'),
 }
 
+_ENGINE = None
 
-# 创建SQLAlchemy引擎
+
 def get_db_engine():
-    connection_string = f"mysql+pymysql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}?charset={DB_CONFIG['charset']}"
-    return create_engine(connection_string)
+    global _ENGINE
+    if _ENGINE is not None:
+        return _ENGINE
+
+    connection_string = (
+        f"mysql+pymysql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
+        f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+        f"?charset={DB_CONFIG['charset']}"
+    )
+    _ENGINE = create_engine(connection_string, pool_pre_ping=True)
+    return _ENGINE
 
 
-# 获取需跟踪的股票及其起始时间（修改SQL部分）
 def fetch_stock_list():
     engine = get_db_engine()
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT stock_code, begin_time FROM stock_base"))
-        df = pd.DataFrame(result.fetchall(), columns=['stock_code', 'begin_time'])
+        result = conn.execute(text('SELECT stock_code, begin_time FROM stock_base'))
+        rows = result.fetchall()
+
+    if not rows:
+        return pd.DataFrame(columns=['stock_code', 'begin_time'])
+
+    df = pd.DataFrame(rows, columns=['stock_code', 'begin_time'])
     df['stock_code'] = df['stock_code'].astype(str)
     df['begin_time'] = pd.to_datetime(df['begin_time'])
     return df
 
 
-# 获取每只股票的最后跟踪时间（修改SQL部分）
 def fetch_last_times(codes):
+    if not codes:
+        return {}
+
     engine = get_db_engine()
-    placeholders = ', '.join([':code_' + str(i) for i in range(len(codes))])
-    params = {'code_' + str(i): code for i, code in enumerate(codes)}
+    placeholders = ', '.join([f':code_{i}' for i in range(len(codes))])
+    params = {f'code_{i}': code for i, code in enumerate(codes)}
 
     with engine.connect() as conn:
-        query = text(f"""
-            SELECT stock_code, MAX(track_time) AS last_time 
-            FROM stock_price_tracking 
-            WHERE stock_code IN ({placeholders}) 
+        query = text(
+            f"""
+            SELECT stock_code, MAX(track_time) AS last_time
+            FROM stock_price_tracking
+            WHERE stock_code IN ({placeholders})
             GROUP BY stock_code
-        """)
-        result = conn.execute(query, params)
-        rows = result.fetchall()
+            """
+        )
+        rows = conn.execute(query, params).fetchall()
 
-    return {r[0]: r[1] for r in rows}
+    return {str(row[0]): row[1] for row in rows}
 
 
-# 插入行情数据（保持原逻辑不变）
+def prepare_quote_rows(code, quote):
+    if quote is None or quote.empty:
+        return []
+
+    prepared = quote.copy()
+    prepared.columns = [str(col).strip() for col in prepared.columns]
+
+    required_columns = ['时间', '开盘', '收盘', '最高', '最低', '涨跌幅', '成交量', '成交额']
+    missing_columns = [col for col in required_columns if col not in prepared.columns]
+    if missing_columns:
+        raise ValueError(f'行情字段缺失: {missing_columns}')
+
+    prepared['时间'] = pd.to_datetime(prepared['时间'])
+    for col in ['开盘', '收盘', '最高', '最低', '涨跌幅', '成交量', '成交额']:
+        prepared[col] = pd.to_numeric(prepared[col], errors='coerce').fillna(0)
+
+    rows = []
+    for _, row in prepared.iterrows():
+        track_time = pd.Timestamp(row['时间']).to_pydatetime()
+        open_price = float(row['开盘'])
+        current_price = float(row['收盘'])
+        high_price = float(row['最高'])
+        low_price = float(row['最低'])
+        change_rate = float(row['涨跌幅'])
+        volume = float(row['成交量'])
+        amount = float(row['成交额'])
+
+        rows.append(
+            {
+                'stock_code': code,
+                'track_time': track_time,
+                'current_price': current_price,
+                'open_price': open_price,
+                'high_price': high_price,
+                'low_price': low_price,
+                'volume': volume,
+                'amount': amount,
+                'change_rate': change_rate,
+            }
+        )
+
+        if track_time.hour == 10 and track_time.minute == 0:
+            rows.append(
+                {
+                    'stock_code': code,
+                    'track_time': track_time.replace(hour=9, minute=30, second=0, microsecond=0),
+                    'current_price': open_price,
+                    'open_price': open_price,
+                    'high_price': open_price,
+                    'low_price': open_price,
+                    'volume': 0,
+                    'amount': 0,
+                    'change_rate': 0,
+                }
+            )
+
+    return rows
+
+
 def insert_quote(code, quote):
-    for row in quote.itertuples(index=False):
-        current_time = pd.Timestamp(row[0])
-        if current_time.hour == 10 and current_time.minute == 0:
-            new_time = current_time.replace(hour=9, minute=30)
-            new_row = [new_time]
-            new_row += [row[1]] * 4
-            new_row += [0] * 6
-            quote.loc[len(quote)] = new_row
+    rows = prepare_quote_rows(code, quote)
+    if not rows:
+        logging.info(f'{code} 无可写入行情数据')
+        return
+
+    sql = text(
+        """
+        INSERT INTO stock_price_tracking (
+            stock_code, track_time, current_price, open_price, high_price, low_price,
+            volume, amount, change_rate
+        ) VALUES (
+            :stock_code, :track_time, :current_price, :open_price, :high_price, :low_price,
+            :volume, :amount, :change_rate
+        ) ON DUPLICATE KEY UPDATE
+            current_price = VALUES(current_price),
+            open_price = VALUES(open_price),
+            high_price = VALUES(high_price),
+            low_price = VALUES(low_price),
+            volume = VALUES(volume),
+            amount = VALUES(amount),
+            change_rate = VALUES(change_rate)
+        """
+    )
 
     engine = get_db_engine()
-    with engine.connect() as conn:
-        sql = text(f"""INSERT INTO stock_price_tracking "
-           "(stock_code, track_time, current_price, open_price, high_price, low_price, "
-           "volume, amount, change_rate) "
-           "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-           "ON DUPLICATE KEY UPDATE "
-           "current_price=VALUES(current_price), open_price=VALUES(open_price), "
-           "high_price=VALUES(high_price), low_price=VALUES(low_price), "
-           "volume=VALUES(volume), amount=VALUES(amount), change_rate=VALUES(change_rate)""")
-        for row in quote.itertuples(index=False):
-            try:
-                conn.execute(sql, (
-                    code,
-                    row[0],
-                    row[2],
-                    row[1],
-                    row[3],
-                    row[4],
-                    row[7],
-                    row[8],
-                    row[5]
-                ))
-            except Exception as e:
-                logging.error(f"{code} 插入数据异常: {e}")
-            finally:
-                conn.commit()
+    try:
+        with engine.begin() as conn:
+            conn.execute(sql, rows)
+        logging.info(f'{code} 插入/更新 {len(rows)} 条行情记录')
+    except Exception:
+        logging.exception(f'{code} 插入行情数据失败')
 
 
-# 获取股票价格数据（保持原逻辑不变）
+def format_begin_time(begin):
+    try:
+        return pd.to_datetime(begin).strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return str(begin)
+
+
 def get_price(code, begin):
     quote = None
     try:
-        quote = ak.stock_zh_a_hist_min_em(symbol=code, period="30", adjust="qfq", start_date=begin)
-        if quote is None or len(quote) == 0:
-            logging.error(f"{code} 获取数据失败")
+        quote = ak.stock_zh_a_hist_min_em(
+            symbol=code,
+            period='30',
+            adjust='qfq',
+            start_date=format_begin_time(begin),
+        )
+        if quote is None or quote.empty:
+            logging.info(f'{code} 无新增行情数据')
             return
         insert_quote(code, quote)
-    except Exception as e:
-        logging.error(f"{code} 获取数据异常: {e}, 数据: {quote}")
+    except Exception:
+        logging.exception(f'{code} 获取数据异常, 数据: {quote}')
 
 
-# 主程序（保持原逻辑不变）
 if __name__ == '__main__':
-    logging.info("开始获取数据")
-    now = datetime.now().replace(second=0, microsecond=0)
+    logging.info('开始获取价格跟踪数据')
     stock_df = fetch_stock_list()
-    codes = stock_df['stock_code'].tolist()
-    last_times = fetch_last_times(codes)
-    for code, begin in stock_df.itertuples(index=False):
-        logging.info(f"开始获取 {code} 的数据")
-        last = last_times.get(code)
-        if last is None:
-            last = begin
-        get_price(code, last)
-        logging.info(f"{code} 数据获取完成")
-    logging.info("数据获取完成")
+    if stock_df.empty:
+        logging.info('stock_base 为空, 无需执行价格跟踪')
+    else:
+        codes = stock_df['stock_code'].tolist()
+        last_times = fetch_last_times(codes)
+
+        for code, begin in stock_df.itertuples(index=False):
+            logging.info(f'开始获取 {code} 的数据')
+            get_price(code, last_times.get(code, begin))
+            logging.info(f'{code} 数据获取完成')
+
+    logging.info('价格跟踪任务完成')

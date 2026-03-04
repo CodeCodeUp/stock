@@ -13,27 +13,12 @@ const apiClient = axios.create({
   timeout: API_CONFIG.timeout,
 })
 
-// Request interceptor
-apiClient.interceptors.request.use(
-  (config) => {
-    console.log('API Request:', config.method?.toUpperCase(), config.url)
-    return config
-  },
-  (error) => {
-    console.error('API Request Error:', error)
-    return Promise.reject(error)
-  },
-)
-
 // Response interceptor
 apiClient.interceptors.response.use(
   (response) => {
-    console.log('API Response:', response.status, response.config.url)
     return response
   },
   (error) => {
-    console.error('API Response Error:', error)
-
     // Show user-friendly error messages
     if (error.response) {
       const status = error.response.status
@@ -66,24 +51,12 @@ apiClient.interceptors.response.use(
  * @returns Promise with stock data array
  */
 export const fetchStockChanges = async (params: StockChangesParams): Promise<StockDataItem[]> => {
-  try {
-    const url = buildApiUrl(API_ENDPOINTS.STOCK_CHANGES)
-    const queryString = buildQueryString(params)
-    const fullUrl = queryString ? `${url}?${queryString}` : url
+  const url = buildApiUrl(API_ENDPOINTS.STOCK_CHANGES)
+  const queryString = buildQueryString(params)
+  const fullUrl = queryString ? `${url}?${queryString}` : url
 
-    const response = await apiClient.get(fullUrl)
-
-    // Add additional properties to each item
-    return response.data.map((item: StockDataItem) => ({
-      ...item,
-      chartLoading: false,
-      stockDetail: null,
-      expanded: false,
-    }))
-  } catch (error) {
-    console.error('Failed to fetch stock changes:', error)
-    throw error
-  }
+  const response = await apiClient.get(fullUrl)
+  return response.data
 }
 
 /**
@@ -92,14 +65,9 @@ export const fetchStockChanges = async (params: StockChangesParams): Promise<Sto
  * @returns Promise with stock detail data
  */
 export const fetchStockChart = async (stockCode: string): Promise<StockDetailData> => {
-  try {
-    const url = buildApiUrl(API_ENDPOINTS.STOCK_CHART, { stockCode })
-    const response = await apiClient.get(url)
-    return response.data
-  } catch (error) {
-    console.error('Failed to fetch stock chart:', error)
-    throw error
-  }
+  const url = buildApiUrl(API_ENDPOINTS.STOCK_CHART, { stockCode })
+  const response = await apiClient.get(url)
+  return response.data
 }
 
 /**
@@ -112,43 +80,14 @@ export const fetchStockHistoryDetail = async (
   stockCode: string,
   changerNames?: string,
 ): Promise<StockDetailData> => {
-  try {
-    const url = buildApiUrl(API_ENDPOINTS.STOCK_HISTORY_DETAIL)
-    const params = {
-      code: stockCode,
-      name: changerNames || '',
-    }
-    const queryString = buildQueryString(params)
-    const fullUrl = `${url}?${queryString}`
-
-    const response = await apiClient.get(fullUrl)
-    return response.data
-  } catch (error) {
-    console.error('Failed to fetch stock history detail:', error)
-    throw error
+  const url = buildApiUrl(API_ENDPOINTS.STOCK_HISTORY_DETAIL)
+  const params = {
+    code: stockCode,
+    name: changerNames || '',
   }
-}
+  const queryString = buildQueryString(params)
+  const fullUrl = `${url}?${queryString}`
 
-/**
- * Retry function for failed requests
- * @param fn - Function to retry
- * @param retries - Number of retries
- * @param delay - Delay between retries
- * @returns Promise with function result
- */
-export const retryRequest = async <T>(
-  fn: () => Promise<T>,
-  retries: number = API_CONFIG.retries,
-  delay: number = API_CONFIG.retryDelay,
-): Promise<T> => {
-  try {
-    return await fn()
-  } catch (error) {
-    if (retries > 0) {
-      console.log(`Retrying request... ${retries} attempts left`)
-      await new Promise((resolve) => setTimeout(resolve, delay))
-      return retryRequest(fn, retries - 1, delay)
-    }
-    throw error
-  }
+  const response = await apiClient.get(fullUrl)
+  return response.data
 }

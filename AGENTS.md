@@ -88,6 +88,7 @@ python stock_price_tracking.py      # 运行价格追踪采集
 | `DB_NAME` | 数据库名 | `stock` |
 | `VITE_API_BASE_URL` | 前端 API 地址 (开发用) | 空 (生产走 nginx 代理) |
 | `DATA_API_URL` | 后端访问 Python API 地址 | `http://localhost:5000` |
+| `DATA_API_PORT` | Python API 容器监听端口 | `5000` |
 
 ## 代码风格
 
@@ -126,7 +127,5 @@ python stock_price_tracking.py      # 运行价格追踪采集
 2. **无统一响应格式**：Controller 直接返回对象，无 `Result<T>` 包装
 3. **CORS 全开放**：`allowedOrigins("*")`，仅限开发环境
 4. **MySQL 驱动重复**：`pom.xml` 同时引入了 `mysql-connector-java` 和 `mysql-connector-j`
-5. **Vue Router 空壳**：`routes` 数组为空，实际未使用路由
-6. **Python SQL 语法错误**：`stock_price_tracking.py` 的 `insert_quote` 函数 SQL 损坏，不可用
-7. **前端缺依赖**：`@element-plus/icons-vue` 未在 package.json 声明
-8. **前端内存泄漏**：StockHistoryDetail 的 echarts 实例和 resize 监听器未清理
+5. **测试覆盖不足**：前端无 Vitest 测试文件，后端仅有 `contextLoads` 冒烟测试
+6. **前端包体积偏大**：当前构建主包约 2MB，需后续做按需加载/分包优化

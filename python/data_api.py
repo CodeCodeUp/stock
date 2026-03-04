@@ -1,3 +1,5 @@
+import os
+
 import akshare as ak
 from flask import Flask, jsonify, request
 
@@ -20,7 +22,7 @@ def get_stock_hold_management():
 
 
 @app.route('/stock_hist_day', methods=['GET'])
-def get_stock_hist_min():
+def get_stock_hist_day():
     code = request.args.get('code')
     begin = request.args.get('begin')
     period = request.args.get('period', 'daily')
@@ -36,4 +38,6 @@ def get_stock_hist_min():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    host = os.getenv('DATA_API_HOST', '0.0.0.0')
+    port = int(os.getenv('DATA_API_PORT', '5000'))
+    app.run(host=host, port=port)

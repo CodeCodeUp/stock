@@ -212,7 +212,10 @@ export const createChartOption = (
  * @param option - Chart option
  * @returns ECharts instance
  */
-export const initChart = (domElement: HTMLElement, option: any): echarts.ECharts => {
+export const initChart = (
+  domElement: HTMLElement,
+  option: echarts.EChartsCoreOption,
+): echarts.ECharts => {
   const chartInstance = echarts.init(domElement)
   chartInstance.setOption(option)
   return chartInstance

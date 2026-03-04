@@ -18,7 +18,6 @@ export const useChart = () => {
    * Fetch stock detail data
    */
   const fetchStockDetail = async (row: StockDataItem): Promise<void> => {
-    // Mark as loading
     row.chartLoading = true
 
     try {
@@ -29,8 +28,7 @@ export const useChart = () => {
       nextTick(() => {
         initStockChart(row)
       })
-    } catch (error) {
-      console.error('Failed to fetch stock detail:', error)
+    } catch {
       ElMessage.error('获取股票详情失败，请重试')
       row.stockDetail = null
     } finally {
@@ -48,7 +46,6 @@ export const useChart = () => {
     const chartDomId = `chart-${row.stockCode}-${row.tradeDate}`
     const chartDom = document.getElementById(chartDomId)
     if (!chartDom) {
-      console.error(`Chart container ${chartDomId} does not exist`)
       return
     }
 
@@ -66,7 +63,6 @@ export const useChart = () => {
 
     // Initialize chart
     chartInstances.value[chartDomId] = initChart(chartDom, option)
-    console.log(`Chart ${chartDomId} initialized`)
   }
 
   /**
@@ -76,8 +72,14 @@ export const useChart = () => {
     row: StockDataItem,
     expandedRows: StockDataItem[],
   ): Promise<void> => {
-    // Update expand state
-    console.log('Expanded rows:', expandedRows, 'Current row:', row)
+    const rowKey = `${row.stockCode}-${row.tradeDate}`
+    const isExpanded = expandedRows.some(
+      (item) => `${item.stockCode}-${item.tradeDate}` === rowKey,
+    )
+
+    if (!isExpanded) {
+      return
+    }
 
     // If row is expanded and has no stock detail data, fetch it
     if (!row.stockDetail) {
@@ -131,10 +133,7 @@ export const useChart = () => {
   })
 
   return {
-    // State
     chartInstances,
-
-    // Methods
     fetchStockDetail,
     initStockChart,
     handleExpandChange,

@@ -14,7 +14,6 @@ export interface StockDataItem {
   changerPosition: string
   chartLoading?: boolean
   stockDetail?: StockDetailData | null
-  expanded?: boolean
   price?: number
 }
 
@@ -68,7 +67,7 @@ export interface DateShortcut {
 // Sort column interface
 export interface SortColumn {
   prop: string
-  order: string | null
+  order: 'ascending' | 'descending' | null
 }
 
 // History detail props interface
