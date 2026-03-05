@@ -1,9 +1,13 @@
 import os
+import atexit
 
 import akshare as ak
 from flask import Flask, jsonify, request
 
+from scheduler import start_background_scheduler
+
 app = Flask(__name__)
+embedded_scheduler = None
 
 
 @app.route('/stock_hold_management', methods=['GET'])
@@ -40,4 +44,12 @@ def get_stock_hist_day():
 if __name__ == '__main__':
     host = os.getenv('DATA_API_HOST', '0.0.0.0')
     port = int(os.getenv('DATA_API_PORT', '5000'))
+
+    if os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true':
+        try:
+            embedded_scheduler = start_background_scheduler()
+            atexit.register(lambda: embedded_scheduler.shutdown(wait=False))
+        except Exception:
+            app.logger.exception('定时器启动失败，继续仅以 API 模式运行')
+
     app.run(host=host, port=port)

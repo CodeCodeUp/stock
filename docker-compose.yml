@@ -36,22 +36,7 @@ services:
     environment:
       DATA_API_HOST: 0.0.0.0
       DATA_API_PORT: ${DATA_API_PORT:-5000}
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME:-stock}
-    restart: unless-stopped
-
-  data-scheduler:
-    build:
-      context: ./python
-      args:
-        DOCKER_MIRROR: ${DOCKER_MIRROR:-docker.m.daocloud.io}
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
-    command: ["python", "scheduler.py"]
-    environment:
+      ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT:-3306}
       DB_USER: ${DB_USER}

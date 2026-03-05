@@ -6,7 +6,9 @@ from zoneinfo import ZoneInfo
 
 import akshare as ak
 import pandas as pd
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from stock_change_importer import run_importer
@@ -75,8 +77,7 @@ def run_locked_job(job_name, lock, job_func, trading_day_only=True):
         lock.release()
 
 
-def create_scheduler():
-    scheduler = BlockingScheduler(timezone=TIMEZONE)
+def register_jobs(scheduler: BaseScheduler):
 
     if ENABLE_PRICE_TRACKING:
         scheduler.add_job(
@@ -109,15 +110,35 @@ def create_scheduler():
     return scheduler
 
 
-if __name__ == '__main__':
-    scheduler = create_scheduler()
+def create_scheduler(scheduler_cls=BlockingScheduler):
+    scheduler = scheduler_cls(timezone=TIMEZONE)
+    return register_jobs(scheduler)
 
+
+def log_registered_jobs(scheduler: BaseScheduler):
     jobs = scheduler.get_jobs()
     if not jobs:
         logging.warning('未启用任何定时任务，请检查 ENABLE_IMPORTER / ENABLE_PRICE_TRACKING')
-    else:
-        for job in jobs:
-            logging.info('已注册任务: id=%s next_run=%s', job.id, job.next_run_time)
+        return
 
-    logging.info('调度器启动，时区=%s', TIMEZONE)
+    for job in jobs:
+        logging.info('已注册任务: id=%s next_run=%s', job.id, job.next_run_time)
+
+
+def start_background_scheduler():
+    scheduler = create_scheduler(BackgroundScheduler)
+    log_registered_jobs(scheduler)
     scheduler.start()
+    logging.info('内嵌调度器已启动，时区=%s', TIMEZONE)
+    return scheduler
+
+
+def start_blocking_scheduler():
+    scheduler = create_scheduler(BlockingScheduler)
+    log_registered_jobs(scheduler)
+    logging.info('独立调度器启动，时区=%s', TIMEZONE)
+    scheduler.start()
+
+
+if __name__ == '__main__':
+    start_blocking_scheduler()

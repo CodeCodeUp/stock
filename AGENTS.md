@@ -8,13 +8,13 @@
 stock/
 ├── frontend/           # Vue 3 + TypeScript 前端 (Vite, nginx)
 ├── backend/            # Spring Boot 3.4.5 后端 (Maven, Java 17)
-├── python/             # Python 数据采集 (Flask API + 脚本 + APScheduler)
-├── docker-compose.yml  # 编排: frontend + backend + data-api + data-scheduler
+├── python/             # Python 数据采集 (Flask API + 脚本 + 内嵌 APScheduler)
+├── docker-compose.yml  # 编排: frontend + backend + data-api
 ├── .env.example        # 环境变量模板 (DB 连接等)
 └── AGENTS.md
 ```
 
-单一 Git 仓库，四个服务通过 Docker Compose 统一编排，MySQL 由外部提供。
+单一 Git 仓库，三个服务通过 Docker Compose 统一编排，MySQL 由外部提供。
 
 ## 构建 / 运行 / 测试命令
 
@@ -27,7 +27,7 @@ docker compose logs -f        # 查看日志
 docker compose down           # 停止
 ```
 
-定时任务默认开启（`data-scheduler`）：
+定时任务默认开启（内嵌在 `data-api` 容器进程中）：
 - 工作日 09:05,09:35,10:05,10:35,11:05,11:35,13:05,13:35,14:05,14:35,15:05 运行价格追踪
 - 工作日 18:10 运行增减持导入
 
@@ -97,6 +97,7 @@ python stock_price_tracking.py      # 运行价格追踪采集
 | `NPM_REGISTRY` | npm 镜像地址 | `https://registry.npmmirror.com` |
 | `PIP_INDEX_URL` | pip 镜像地址 | `https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `PIP_TRUSTED_HOST` | pip 可信主机 | `pypi.tuna.tsinghua.edu.cn` |
+| `ENABLE_SCHEDULER` | 是否在 data-api 中启用定时器 | `true` |
 | `SCHEDULER_TIMEZONE` | 定时任务时区 | `Asia/Shanghai` |
 | `ENABLE_IMPORTER` | 是否启用增减持定时导入 | `true` |
 | `ENABLE_PRICE_TRACKING` | 是否启用价格追踪定时采集 | `true` |
