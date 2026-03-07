@@ -1,9 +1,4 @@
-/**
- * Stock Data Composable
- * Composable for managing stock data state and operations
- */
-
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchStockChanges } from '@/services/stockApi'
 import {
@@ -11,7 +6,11 @@ import {
   getDateRangeFromDaysAgo,
   getDateRangeFromMonthsAgo,
 } from '@/utils/formatters'
-import type { StockDataItem, DateShortcut, SortColumn, ChangeType, SortOrder } from '@/types/stock'
+import type { ChangeType, DateShortcut, SortColumn, SortOrder, StockDataItem } from '@/types/stock'
+
+const createUiKey = (item: StockDataItem, index: number): string => {
+  return `${item.stockCode}-${item.latestTradeDate}-${index}`
+}
 
 export const useStockData = () => {
   const stockData = ref<StockDataItem[]>([])
@@ -20,16 +19,9 @@ export const useStockData = () => {
   const changeType = ref<ChangeType>('增持')
   const changeSort = ref<SortOrder>('')
   const totalPrice = ref<number>(100000)
-
   const currentPage = ref(1)
-  const pageSize = ref(10)
+  const pageSize = ref(20)
   const totalCount = ref(0)
-
-  const displayData = computed(() => {
-    const startIndex = (currentPage.value - 1) * pageSize.value
-    const endIndex = startIndex + pageSize.value
-    return stockData.value.slice(startIndex, endIndex)
-  })
 
   const shortcuts: DateShortcut[] = [
     {
@@ -56,15 +48,15 @@ export const useStockData = () => {
   ]
 
   const headerStyle = {
-    background: '#f5f7fa',
-    color: '#303133',
+    background: 'rgba(241, 245, 249, 0.95)',
+    color: '#1e293b',
     fontWeight: '600',
+    borderBottom: '1px solid rgba(148, 163, 184, 0.18)',
   }
 
-  /**
-   * Fetch stock data with current parameters
-   */
-  const fetchData = async () => {
+  const displayData = computed(() => stockData.value)
+
+  const fetchData = async (page = currentPage.value) => {
     if (!dateRange.value || dateRange.value.length !== 2) {
       ElMessage.warning('请选择日期范围')
       return
@@ -78,75 +70,70 @@ export const useStockData = () => {
         totalPrice.value !== undefined &&
         !Number.isNaN(totalPrice.value)
 
-      const params = {
+      const response = await fetchStockChanges({
         start: startDate,
         end: endDate,
-        ...(changeType.value && { changeType: changeType.value }),
-        ...(changeSort.value && { changeSort: changeSort.value }),
-        ...(hasTotalPriceFilter && { totalPrice: totalPrice.value }),
-      }
+        changeType: changeType.value || undefined,
+        changeSort: changeSort.value || undefined,
+        totalPrice: hasTotalPriceFilter ? totalPrice.value : undefined,
+        page,
+        pageSize: pageSize.value,
+      })
 
-      const data = await fetchStockChanges(params)
-      stockData.value = data.map((item) => ({
+      stockData.value = response.items.map((item, index) => ({
         ...item,
+        totalIncrease: Number(item.totalIncrease ?? 0),
+        totalDecrease: Number(item.totalDecrease ?? 0),
+        totalAmount: Number(item.totalAmount ?? 0),
+        changeCount: Number(item.changeCount ?? 0),
+        uiKey: createUiKey(item, index),
         chartLoading: false,
         stockDetail: null,
       }))
-      totalCount.value = stockData.value.length
-      currentPage.value = 1 // Reset to first page
-    } catch {
+      totalCount.value = response.total
+      currentPage.value = response.page
+      pageSize.value = response.pageSize
+    } catch (error) {
       stockData.value = []
       totalCount.value = 0
+      ElMessage.error(error instanceof Error ? error.message : '获取股票列表失败')
     } finally {
       loading.value = false
     }
   }
 
-  /**
-   * Handle sort change
-   */
-  const handleSortChange = (column: SortColumn) => {
-    if (column.prop === 'changeAmount') {
-      if (column.order === 'ascending') {
-        changeSort.value = 'asc'
-      } else if (column.order === 'descending') {
-        changeSort.value = 'desc'
-      } else {
-        changeSort.value = ''
-      }
-      fetchData()
+  const handleSortChange = async (column: SortColumn) => {
+    if (column.prop !== 'totalAmount') {
+      return
     }
+
+    if (column.order === 'ascending') {
+      changeSort.value = 'asc'
+    } else if (column.order === 'descending') {
+      changeSort.value = 'desc'
+    } else {
+      changeSort.value = ''
+    }
+
+    await fetchData(1)
   }
 
-  /**
-   * Handle page size change
-   */
-  const handleSizeChange = (size: number) => {
+  const handleSizeChange = async (size: number) => {
     pageSize.value = size
-    // Adjust page number to ensure data is displayed correctly
-    if (currentPage.value > Math.ceil(totalCount.value / pageSize.value)) {
-      currentPage.value = 1
-    }
+    await fetchData(1)
   }
 
-  /**
-   * Handle page change
-   */
-  const handleCurrentChange = (page: number) => {
+  const handleCurrentChange = async (page: number) => {
     currentPage.value = page
+    await fetchData(page)
   }
 
-  /**
-   * Initialize with default date range and fetch data
-   */
-  const initialize = () => {
-    // Set default date range to current month
+  const initialize = async () => {
     const [start, end] = getCurrentMonthRange()
     dateRange.value = [start, end]
-    fetchData()
+    await fetchData(1)
   }
 
-  // Initialize on mount
   onMounted(() => {
     initialize()
   })
@@ -168,6 +155,5 @@ export const useStockData = () => {
     handleSortChange,
     handleSizeChange,
     handleCurrentChange,
-    initialize,
   }
 }

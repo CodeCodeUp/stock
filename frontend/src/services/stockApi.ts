@@ -1,93 +1,89 @@
-/**
- * Stock API Service
- * Centralized API service functions for stock data
- */
+import axios, { AxiosError, type AxiosRequestConfig } from 'axios'
+import { API_ENDPOINTS, API_CONFIG, buildApiUrl, buildQueryString } from '@/config/api'
+import type {
+  ApiResponse,
+  ChartQueryParams,
+  PageResult,
+  StockChangesParams,
+  StockDataItem,
+  StockDetailData,
+} from '@/types/stock'
 
-import axios from 'axios'
-import { ElMessage } from 'element-plus'
-import { API_ENDPOINTS, buildApiUrl, buildQueryString, API_CONFIG } from '@/config/api'
-import type { StockDataItem, StockDetailData, StockChangesParams } from '@/types/stock'
-
-// Create axios instance with default config
 const apiClient = axios.create({
   timeout: API_CONFIG.timeout,
 })
 
-// Response interceptor
-apiClient.interceptors.response.use(
-  (response) => {
-    return response
-  },
-  (error) => {
-    // Show user-friendly error messages
-    if (error.response) {
-      const status = error.response.status
-      switch (status) {
-        case 404:
-          ElMessage.error('请求的资源不存在')
-          break
-        case 500:
-          ElMessage.error('服务器内部错误')
-          break
-        case 503:
-          ElMessage.error('服务暂时不可用')
-          break
-        default:
-          ElMessage.error(`请求失败 (${status})`)
-      }
-    } else if (error.code === 'ECONNABORTED') {
-      ElMessage.error('请求超时，请重试')
-    } else {
-      ElMessage.error('网络错误，请检查网络连接')
+const extractMessage = (error: unknown): string => {
+  if (error instanceof AxiosError) {
+    const responseMessage = error.response?.data?.message
+    if (typeof responseMessage === 'string' && responseMessage.trim()) {
+      return responseMessage
+    }
+    if (error.code === 'ECONNABORTED') {
+      return '请求超时，请稍后重试'
+    }
+    if (error.response?.status) {
+      return `请求失败 (${error.response.status})`
+    }
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return '网络异常，请稍后重试'
+}
+
+const request = async <T>(config: AxiosRequestConfig): Promise<T> => {
+  try {
+    const response = await apiClient.request<ApiResponse<T>>(config)
+    const payload = response.data
+
+    if (!payload || typeof payload.code !== 'number') {
+      throw new Error('接口响应格式错误')
     }
 
-    return Promise.reject(error)
-  },
-)
+    if (payload.code !== 0) {
+      throw new Error(payload.message || '请求失败')
+    }
 
-/**
- * Fetch stock changes data
- * @param params - Query parameters
- * @returns Promise with stock data array
- */
-export const fetchStockChanges = async (params: StockChangesParams): Promise<StockDataItem[]> => {
+    return payload.data
+  } catch (error) {
+    throw new Error(extractMessage(error))
+  }
+}
+
+export const fetchStockChanges = async (
+  params: StockChangesParams,
+): Promise<PageResult<StockDataItem>> => {
   const url = buildApiUrl(API_ENDPOINTS.STOCK_CHANGES)
   const queryString = buildQueryString(params)
-  const fullUrl = queryString ? `${url}?${queryString}` : url
-
-  const response = await apiClient.get(fullUrl)
-  return response.data
+  return request<PageResult<StockDataItem>>({
+    url: queryString ? `${url}?${queryString}` : url,
+    method: 'GET',
+  })
 }
 
-/**
- * Fetch stock chart detail
- * @param stockCode - Stock code
- * @returns Promise with stock detail data
- */
-export const fetchStockChart = async (stockCode: string): Promise<StockDetailData> => {
+export const fetchStockChart = async (
+  stockCode: string,
+  params?: ChartQueryParams,
+): Promise<StockDetailData> => {
   const url = buildApiUrl(API_ENDPOINTS.STOCK_CHART, { stockCode })
-  const response = await apiClient.get(url)
-  return response.data
+  const queryString = params ? buildQueryString(params) : ''
+  return request<StockDetailData>({
+    url: queryString ? `${url}?${queryString}` : url,
+    method: 'GET',
+  })
 }
 
-/**
- * Fetch stock history detail
- * @param stockCode - Stock code
- * @param changerNames - Changer names (optional)
- * @returns Promise with stock detail data
- */
 export const fetchStockHistoryDetail = async (
   stockCode: string,
-  changerNames?: string,
+  changerNames: string,
 ): Promise<StockDetailData> => {
   const url = buildApiUrl(API_ENDPOINTS.STOCK_HISTORY_DETAIL)
-  const params = {
-    code: stockCode,
-    name: changerNames || '',
-  }
-  const queryString = buildQueryString(params)
-  const fullUrl = `${url}?${queryString}`
-
-  const response = await apiClient.get(fullUrl)
-  return response.data
+  const queryString = buildQueryString({ code: stockCode, name: changerNames })
+  return request<StockDetailData>({
+    url: `${url}?${queryString}`,
+    method: 'GET',
+  })
 }

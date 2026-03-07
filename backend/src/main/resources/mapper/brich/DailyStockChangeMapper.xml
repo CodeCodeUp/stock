@@ -3,25 +3,53 @@
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.example.brich.mapper.DailyStockChangeMapper">
-    <select id="findAggregatedChangesByDay" resultType="com.example.brich.model.AggregatedChangeDto">
-        SELECT
-        trade_date       AS tradeDate,
-        stock_code       AS stockCode,
-        stock_name       AS stockName,
-        change_type      AS changeType,
-        total_price      AS totalPrice,
-        changer_name      AS changerName,
-        changer_position AS changerPosition
-        FROM daily_stock_change
-        WHERE 1=1
-        <if test="changeType != null">
+    <sql id="summaryFilters">
+        WHERE trade_date BETWEEN #{start} AND #{end}
+        <if test="changeType != null and changeType != ''">
             AND change_type = #{changeType}
         </if>
         <if test="totalPrice != null">
-            AND ABS(total_price) >= #{totalPrice}
+            AND ABS(total_price) <![CDATA[ >= ]]> #{totalPrice}
         </if>
-        AND trade_date BETWEEN #{start} AND #{end}
-        ORDER BY trade_date DESC
+    </sql>
+
+    <select id="countStockChangeSummaries" resultType="long">
+        SELECT COUNT(*)
+        FROM (
+            SELECT stock_code, stock_name
+            FROM daily_stock_change
+            <include refid="summaryFilters" />
+            GROUP BY stock_code, stock_name
+        ) summary_count
+    </select>
+
+    <select id="findStockChangeSummaries" resultType="com.example.brich.model.StockChangeSummary">
+        SELECT
+            stock_code AS stockCode,
+            stock_name AS stockName,
+            MIN(trade_date) AS firstTradeDate,
+            MAX(trade_date) AS latestTradeDate,
+            COUNT(*) AS changeCount,
+            COALESCE(SUM(CASE WHEN change_type = '增持' THEN ABS(total_price) ELSE 0 END), 0) AS totalIncrease,
+            COALESCE(SUM(CASE WHEN change_type = '减持' THEN ABS(total_price) ELSE 0 END), 0) AS totalDecrease,
+            COALESCE(SUM(ABS(total_price)), 0) AS totalAmount,
+            GROUP_CONCAT(DISTINCT NULLIF(changer_name, '') ORDER BY changer_name SEPARATOR ',') AS changerName,
+            GROUP_CONCAT(DISTINCT NULLIF(changer_position, '') ORDER BY changer_position SEPARATOR ',') AS changerPosition
+        FROM daily_stock_change
+        <include refid="summaryFilters" />
+        GROUP BY stock_code, stock_name
+        <choose>
+            <when test="changeSort == 'asc'">
+                ORDER BY totalAmount ASC, latestTradeDate DESC, stockCode ASC
+            </when>
+            <when test="changeSort == 'desc'">
+                ORDER BY totalAmount DESC, latestTradeDate DESC, stockCode ASC
+            </when>
+            <otherwise>
+                ORDER BY latestTradeDate DESC, totalAmount DESC, stockCode ASC
+            </otherwise>
+        </choose>
+        LIMIT #{pageSize} OFFSET #{offset}
     </select>
 
     <select id="findPricePoints" resultType="com.example.brich.model.PricePointDto">
@@ -30,20 +58,33 @@
         current_price   AS currentPrice
         FROM stock_price_tracking
         WHERE stock_code = #{code}
+        <if test="startTime != null">
+            AND track_time <![CDATA[ >= ]]> #{startTime}
+        </if>
+        <if test="endTime != null">
+            AND track_time <![CDATA[ < ]]> #{endTime}
+        </if>
         ORDER BY track_time
     </select>
 
-    <select id="findMarks" resultType="com.example.brich.model.AggregatedChangeDto">
+    <select id="findMarks" resultType="com.example.brich.model.StockChangeMark">
         SELECT
         trade_date      AS tradeDate,
-        change_type      AS changeType,
-        total_price      AS totalPrice,
-        price             AS price,
-        changer_name      AS changerName,
+        stock_code      AS stockCode,
+        stock_name      AS stockName,
+        change_type     AS changeType,
+        ABS(total_price) AS totalPrice,
+        price           AS price,
+        changer_name    AS changerName,
         changer_position AS changerPosition
         FROM daily_stock_change
-        WHERE
-        stock_code = #{code}
+        WHERE stock_code = #{code}
+        <if test="start != null">
+            AND trade_date <![CDATA[ >= ]]> #{start}
+        </if>
+        <if test="end != null">
+            AND trade_date <![CDATA[ <= ]]> #{end}
+        </if>
         ORDER BY trade_date
     </select>
 </mapper>

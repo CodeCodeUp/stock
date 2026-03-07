@@ -1,40 +1,18 @@
-import logging
-import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import akshare as ak
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='price_tracking.log',
-)
+from runtime import get_db_engine, get_env_int, get_logger
 
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'host.docker.internal'),
-    'port': int(os.getenv('DB_PORT', '3306')),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', ''),
-    'database': os.getenv('DB_NAME', 'stock'),
-    'charset': os.getenv('DB_CHARSET', 'utf8mb4'),
-}
+logger = get_logger('stock_price_tracking')
 
-_ENGINE = None
-
-
-def get_db_engine():
-    global _ENGINE
-    if _ENGINE is not None:
-        return _ENGINE
-
-    connection_string = (
-        f"mysql+pymysql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
-        f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
-        f"?charset={DB_CONFIG['charset']}"
-    )
-    _ENGINE = create_engine(connection_string, pool_pre_ping=True)
-    return _ENGINE
+PRICE_TRACKING_MAX_WORKERS = max(get_env_int('PRICE_TRACKING_MAX_WORKERS', 4), 1)
+PRICE_TRACKING_RETRY_TIMES = max(get_env_int('PRICE_TRACKING_RETRY_TIMES', 3), 1)
+PRICE_TRACKING_RETRY_DELAY_SECONDS = max(get_env_int('PRICE_TRACKING_RETRY_DELAY_SECONDS', 1), 0)
+DB_WRITE_BATCH_SIZE = max(get_env_int('DB_WRITE_BATCH_SIZE', 2000), 1)
 
 
 def fetch_stock_list():
@@ -48,8 +26,8 @@ def fetch_stock_list():
 
     df = pd.DataFrame(rows, columns=['stock_code', 'begin_time'])
     df['stock_code'] = df['stock_code'].astype(str)
-    df['begin_time'] = pd.to_datetime(df['begin_time'])
-    return df
+    df['begin_time'] = pd.to_datetime(df['begin_time'], errors='coerce')
+    return df[df['begin_time'].notna()].copy()
 
 
 def fetch_last_times(codes):
@@ -57,8 +35,8 @@ def fetch_last_times(codes):
         return {}
 
     engine = get_db_engine()
-    placeholders = ', '.join([f':code_{i}' for i in range(len(codes))])
-    params = {f'code_{i}': code for i, code in enumerate(codes)}
+    placeholders = ', '.join([f':code_{index}' for index in range(len(codes))])
+    params = {f'code_{index}': code for index, code in enumerate(codes)}
 
     with engine.connect() as conn:
         query = text(
@@ -74,6 +52,12 @@ def fetch_last_times(codes):
     return {str(row[0]): row[1] for row in rows}
 
 
+def to_float(value, default=None):
+    if pd.isna(value):
+        return default
+    return float(value)
+
+
 def prepare_quote_rows(code, quote):
     if quote is None or quote.empty:
         return []
@@ -82,62 +66,43 @@ def prepare_quote_rows(code, quote):
     prepared.columns = [str(col).strip() for col in prepared.columns]
 
     required_columns = ['时间', '开盘', '收盘', '最高', '最低', '涨跌幅', '成交量', '成交额']
-    missing_columns = [col for col in required_columns if col not in prepared.columns]
+    missing_columns = [column for column in required_columns if column not in prepared.columns]
     if missing_columns:
         raise ValueError(f'行情字段缺失: {missing_columns}')
 
-    prepared['时间'] = pd.to_datetime(prepared['时间'])
-    for col in ['开盘', '收盘', '最高', '最低', '涨跌幅', '成交量', '成交额']:
-        prepared[col] = pd.to_numeric(prepared[col], errors='coerce').fillna(0)
+    prepared['时间'] = pd.to_datetime(prepared['时间'], errors='coerce')
+    for column in ['开盘', '收盘', '最高', '最低', '涨跌幅', '成交量', '成交额']:
+        prepared[column] = pd.to_numeric(prepared[column], errors='coerce')
+
+    prepared = prepared[prepared['时间'].notna()].copy()
+    prepared = prepared.dropna(subset=['开盘', '收盘', '最高', '最低'])
+    if prepared.empty:
+        logger.warning('%s 行情数据缺少有效价格列，全部跳过', code)
+        return []
 
     rows = []
     for _, row in prepared.iterrows():
         track_time = pd.Timestamp(row['时间']).to_pydatetime()
-        open_price = float(row['开盘'])
-        current_price = float(row['收盘'])
-        high_price = float(row['最高'])
-        low_price = float(row['最低'])
-        change_rate = float(row['涨跌幅'])
-        volume = float(row['成交量'])
-        amount = float(row['成交额'])
-
         rows.append(
             {
                 'stock_code': code,
                 'track_time': track_time,
-                'current_price': current_price,
-                'open_price': open_price,
-                'high_price': high_price,
-                'low_price': low_price,
-                'volume': volume,
-                'amount': amount,
-                'change_rate': change_rate,
+                'current_price': to_float(row['收盘']),
+                'open_price': to_float(row['开盘']),
+                'high_price': to_float(row['最高']),
+                'low_price': to_float(row['最低']),
+                'volume': to_float(row['成交量'], 0.0),
+                'amount': to_float(row['成交额'], 0.0),
+                'change_rate': to_float(row['涨跌幅'], 0.0),
             }
         )
-
-        if track_time.hour == 10 and track_time.minute == 0:
-            rows.append(
-                {
-                    'stock_code': code,
-                    'track_time': track_time.replace(hour=9, minute=30, second=0, microsecond=0),
-                    'current_price': open_price,
-                    'open_price': open_price,
-                    'high_price': open_price,
-                    'low_price': open_price,
-                    'volume': 0,
-                    'amount': 0,
-                    'change_rate': 0,
-                }
-            )
 
     return rows
 
 
-def insert_quote(code, quote):
-    rows = prepare_quote_rows(code, quote)
+def insert_quotes(rows: list[dict]):
     if not rows:
-        logging.info(f'{code} 无可写入行情数据')
-        return
+        return 0
 
     sql = text(
         """
@@ -159,12 +124,12 @@ def insert_quote(code, quote):
     )
 
     engine = get_db_engine()
-    try:
-        with engine.begin() as conn:
-            conn.execute(sql, rows)
-        logging.info(f'{code} 插入/更新 {len(rows)} 条行情记录')
-    except Exception:
-        logging.exception(f'{code} 插入行情数据失败')
+    with engine.begin() as conn:
+        for start in range(0, len(rows), DB_WRITE_BATCH_SIZE):
+            batch = rows[start : start + DB_WRITE_BATCH_SIZE]
+            conn.execute(sql, batch)
+
+    return len(rows)
 
 
 def format_begin_time(begin):
@@ -174,38 +139,77 @@ def format_begin_time(begin):
         return str(begin)
 
 
-def get_price(code, begin):
-    quote = None
-    try:
-        quote = ak.stock_zh_a_hist_min_em(
-            symbol=code,
-            period='30',
-            adjust='qfq',
-            start_date=format_begin_time(begin),
-        )
-        if quote is None or quote.empty:
-            logging.info(f'{code} 无新增行情数据')
-            return
-        insert_quote(code, quote)
-    except Exception:
-        logging.exception(f'{code} 获取数据异常, 数据: {quote}')
+def fetch_quote_rows(code, begin):
+    start_time = format_begin_time(begin)
+    for attempt in range(1, PRICE_TRACKING_RETRY_TIMES + 1):
+        try:
+            quote = ak.stock_zh_a_hist_min_em(
+                symbol=code,
+                period='30',
+                adjust='qfq',
+                start_date=start_time,
+            )
+            if quote is None or quote.empty:
+                logger.info('%s 无新增行情数据', code)
+                return []
+
+            rows = prepare_quote_rows(code, quote)
+            logger.info('%s 采集完成，记录=%s', code, len(rows))
+            return rows
+        except Exception:
+            logger.exception('%s 第 %s 次采集失败', code, attempt)
+            if attempt == PRICE_TRACKING_RETRY_TIMES:
+                raise
+            time.sleep(PRICE_TRACKING_RETRY_DELAY_SECONDS * attempt)
+
+    return []
 
 
 def run_price_tracking():
-    logging.info('开始获取价格跟踪数据')
+    logger.info(
+        '开始价格跟踪，最大并发=%s，重试次数=%s',
+        PRICE_TRACKING_MAX_WORKERS,
+        PRICE_TRACKING_RETRY_TIMES,
+    )
     stock_df = fetch_stock_list()
     if stock_df.empty:
-        logging.info('stock_base 为空, 无需执行价格跟踪')
-    else:
-        codes = stock_df['stock_code'].tolist()
-        last_times = fetch_last_times(codes)
+        logger.info('stock_base 为空，无需执行价格跟踪')
+        return
 
-        for code, begin in stock_df.itertuples(index=False):
-            logging.info(f'开始获取 {code} 的数据')
-            get_price(code, last_times.get(code, begin))
-            logging.info(f'{code} 数据获取完成')
+    codes = stock_df['stock_code'].tolist()
+    last_times = fetch_last_times(codes)
+    max_workers = min(PRICE_TRACKING_MAX_WORKERS, len(stock_df))
+    failed_codes = []
+    buffered_rows = []
+    written_count = 0
 
-    logging.info('价格跟踪任务完成')
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='price-track') as executor:
+        futures = {
+            executor.submit(fetch_quote_rows, code, last_times.get(code, begin)): code
+            for code, begin in stock_df.itertuples(index=False)
+        }
+
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                rows = future.result()
+                if rows:
+                    buffered_rows.extend(rows)
+                    if len(buffered_rows) >= DB_WRITE_BATCH_SIZE * 2:
+                        written_count += insert_quotes(buffered_rows)
+                        logger.info('已批量写入行情数据，累计记录=%s', written_count)
+                        buffered_rows = []
+            except Exception:
+                failed_codes.append(code)
+                logger.exception('%s 行情任务失败', code)
+
+    if buffered_rows:
+        written_count += insert_quotes(buffered_rows)
+
+    logger.info('价格跟踪任务完成，写入记录=%s，失败股票数=%s', written_count, len(failed_codes))
+    if failed_codes:
+        preview = ','.join(failed_codes[:10])
+        raise RuntimeError(f'价格跟踪存在失败股票，数量={len(failed_codes)}，示例={preview}')
 
 
 if __name__ == '__main__':

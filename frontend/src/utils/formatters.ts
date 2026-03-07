@@ -1,95 +1,113 @@
-/**
- * Formatting Utilities
- * Common formatting functions for numbers, dates, etc.
- */
+const pad = (value: number): string => String(value).padStart(2, '0')
 
-/**
- * Format number with Chinese locale
- * @param num - Number to format
- * @returns Formatted number string
- */
-export const formatNumber = (num: number | bigint): string => {
-  return new Intl.NumberFormat('zh-CN').format(num)
+const normalizeDate = (date: Date | string): Date => (date instanceof Date ? date : new Date(date))
+
+const formatFixedNumber = (value: number, digits: number): string => {
+  return new Intl.NumberFormat('zh-CN', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value)
 }
 
-/**
- * Format date to local date string
- * @param date - Date to format
- * @returns Formatted date string
- */
-export const formatDate = (date: Date | string): string => {
-  const dateObj = typeof date === 'string' ? new Date(date) : date
-  return dateObj.toLocaleDateString()
+export const formatNumber = (num: number | bigint | null | undefined): string => {
+  if (num === null || num === undefined || Number.isNaN(Number(num))) {
+    return '--'
+  }
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(num)
 }
 
-/**
- * Format time to local time string
- * @param date - Date to format
- * @returns Formatted time string
- */
+export const formatCurrency = (num: number | null | undefined): string => {
+  if (num === null || num === undefined || Number.isNaN(num)) {
+    return '--'
+  }
+
+  const absValue = Math.abs(num)
+  const sign = num < 0 ? '-' : ''
+
+  if (absValue >= 100000000) {
+    return `${sign}¥${formatFixedNumber(absValue / 100000000, 3)}亿`
+  }
+
+  if (absValue >= 10000) {
+    return `${sign}¥${formatFixedNumber(absValue / 10000, 3)}万`
+  }
+
+  return `${sign}¥${formatNumber(absValue)}`
+}
+
+export const formatDate = (date: Date | string | null | undefined): string => {
+  if (!date) {
+    return '--'
+  }
+
+  if (typeof date === 'string') {
+    const trimmed = date.trim()
+    if (!trimmed) {
+      return '--'
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed
+    }
+    if (trimmed.length >= 10) {
+      return trimmed.slice(0, 10)
+    }
+  }
+
+  const dateObj = normalizeDate(date)
+  return `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}`
+}
+
 export const formatTime = (date: Date | string): string => {
-  const dateObj = typeof date === 'string' ? new Date(date) : date
-  return dateObj.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  const dateObj = normalizeDate(date)
+  return `${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`
 }
 
-/**
- * Format date and time together
- * @param date - Date to format
- * @returns Formatted date and time string
- */
 export const formatDateTime = (date: Date | string): string => {
-  const dateObj = typeof date === 'string' ? new Date(date) : date
-  const dateStr = formatDate(dateObj)
-  const timeStr = formatTime(dateObj)
-  return `${dateStr} ${timeStr}`
+  if (typeof date === 'string') {
+    const trimmed = date.trim()
+    if (!trimmed) {
+      return '--'
+    }
+    if (trimmed.includes('T')) {
+      return `${trimmed.slice(0, 10)} ${trimmed.slice(11, 16)}`
+    }
+    if (trimmed.includes(' ')) {
+      return `${trimmed.slice(0, 10)} ${trimmed.slice(11, 16)}`
+    }
+  }
+
+  const dateObj = normalizeDate(date)
+  return `${formatDate(dateObj)} ${formatTime(dateObj)}`
 }
 
-/**
- * Format ISO date string to YYYY-MM-DD
- * @param date - Date to format
- * @returns Formatted date string
- */
 export const formatISODate = (date: Date): string => {
-  return date.toISOString().split('T')[0]
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
-/**
- * Get current month date range
- * @returns Array with start and end date strings
- */
 export const getCurrentMonthRange = (): [string, string] => {
   const end = new Date()
   const start = new Date()
-  start.setDate(1) // First day of current month
-  
+  start.setDate(1)
   return [formatISODate(start), formatISODate(end)]
 }
 
-/**
- * Get date range for specified number of days ago
- * @param days - Number of days ago
- * @returns Array with start and end date strings
- */
 export const getDateRangeFromDaysAgo = (days: number): [string, string] => {
   const end = new Date()
   const start = new Date()
-  start.setTime(start.getTime() - 3600 * 1000 * 24 * days)
-  
+  start.setDate(start.getDate() - days)
   return [formatISODate(start), formatISODate(end)]
 }
 
-/**
- * Get date range for specified number of months ago
- * @param months - Number of months ago
- * @returns Array with start and end date strings
- */
 export const getDateRangeFromMonthsAgo = (months: number): [string, string] => {
   const end = new Date()
   const start = new Date()
   start.setMonth(start.getMonth() - months)
-  
   return [formatISODate(start), formatISODate(end)]
+}
+
+export const formatDateRange = (range: string[]): string => {
+  if (!range || range.length !== 2) {
+    return '未选择'
+  }
+  return `${formatDate(range[0])} - ${formatDate(range[1])}`
 }

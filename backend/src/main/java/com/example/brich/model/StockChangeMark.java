@@ -1,18 +1,18 @@
 package com.example.brich.model;
 
-
 import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
-public class AggregatedChange {
+public class StockChangeMark {
     private LocalDate tradeDate;
     private String stockCode;
     private String stockName;
-    private BigDecimal totalIncrease;
-    private BigDecimal totalDecrease;
+    private String changeType;
+    private BigDecimal totalPrice;
+    private BigDecimal price;
     private String changerName;
     private String changerPosition;
 }

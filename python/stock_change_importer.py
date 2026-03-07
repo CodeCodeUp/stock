@@ -1,182 +1,192 @@
+from datetime import date, datetime, timedelta
+
 import akshare as ak
-import logging
-import os
 import pandas as pd
-from datetime import datetime
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-# 日志配置
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='stock_change_import.log'
-)
+from runtime import dataframe_to_records, get_db_engine, get_env_int, get_logger
 
-# 数据库配置
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'host.docker.internal'),
-    'port': int(os.getenv('DB_PORT', '3306')),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', ''),
-    'database': os.getenv('DB_NAME', 'stock'),
-    'charset': os.getenv('DB_CHARSET', 'utf8mb4')
-}
+logger = get_logger('stock_change_importer')
 
-_ENGINE = None
+IMPORT_LOOKBACK_DAYS = max(get_env_int('IMPORT_LOOKBACK_DAYS', 7), 0)
+DB_WRITE_BATCH_SIZE = max(get_env_int('DB_WRITE_BATCH_SIZE', 2000), 1)
+MIN_TRADE_DATE = date(2000, 1, 1)
 
 
-# 创建SQLAlchemy引擎
-def get_db_engine():
-    global _ENGINE
-    if _ENGINE is not None:
-        return _ENGINE
-
-    conn_str = (
-        f"mysql+pymysql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
-        f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
-        f"?charset={DB_CONFIG['charset']}"
-    )
-    _ENGINE = create_engine(conn_str, pool_pre_ping=True)
-    return _ENGINE
-
-
-# 获取数据库中最大 trade_date
 def get_latest_trade_date():
     engine = get_db_engine()
     with engine.connect() as conn:
         result = conn.execute(text("SELECT IFNULL(MAX(trade_date), '2000-01-01') FROM daily_stock_change"))
-        latest_date = result.scalar()  # 直接获取标量结果
-    return latest_date
+        return result.scalar()
 
 
-# 获取并过滤 akshare 中文列数据
-def fetch_filtered_data(latest_date):
-    logging.info("Fetching data from akshare...")
-    data = ak.stock_hold_management_detail_em()
-    data.rename(columns={
-        "日期": "trade_date",
-        "代码": "stock_code",
-        "名称": "stock_name",
-        "变动人": "changer_name",
-        "职务": "changer_position",
-        "变动股数": "change_shares",
-        "成交均价": "price",
-        "变动金额": "total_price",
-        "变动后持股数": "after_shares",
-        "变动比例": "change_ratio",
-        "变动原因": "change_reason"
-    }, inplace=True)
-
+def get_sync_start_date():
+    latest_date = get_latest_trade_date()
     if isinstance(latest_date, str):
-        latest_date = datetime.strptime(latest_date, "%Y-%m-%d").date()
+        latest_date = datetime.strptime(latest_date, '%Y-%m-%d').date()
+    if latest_date is None:
+        return MIN_TRADE_DATE
+    return max(MIN_TRADE_DATE, latest_date - timedelta(days=IMPORT_LOOKBACK_DAYS))
 
-    data["trade_date"] = pd.to_datetime(data["trade_date"]).dt.date
-    data = data[data["trade_date"] > latest_date]
-    return data
+
+def fetch_incremental_data(sync_start_date):
+    logger.info('开始拉取增减持明细，回看天数=%s，起始日期=%s', IMPORT_LOOKBACK_DAYS, sync_start_date)
+    data = ak.stock_hold_management_detail_em()
+    data = data.rename(
+        columns={
+            '日期': 'trade_date',
+            '代码': 'stock_code',
+            '名称': 'stock_name',
+            '变动人': 'changer_name',
+            '职务': 'changer_position',
+            '变动股数': 'change_shares',
+            '成交均价': 'price',
+            '变动金额': 'total_price',
+            '变动后持股数': 'after_shares',
+            '变动比例': 'change_ratio',
+            '变动原因': 'change_reason',
+        }
+    )
+
+    data['trade_date'] = pd.to_datetime(data['trade_date'], errors='coerce').dt.date
+    data = data[data['trade_date'].notna()]
+    filtered = data[data['trade_date'] >= sync_start_date]
+    logger.info('增减持原始记录=%s，过滤后记录=%s', len(data), len(filtered))
+    return filtered
 
 
-# 判断增减持类型
 def parse_change_type(share: float) -> str:
-    return "减持" if share < 0 else "增持"
+    return '减持' if share < 0 else '增持'
 
 
-# 规范化数据
 def normalize_data(df):
-    logging.info("Normalizing data...")
-    df = df.copy()
-    df["change_type"] = df["change_shares"].apply(parse_change_type)
-    df["change_shares"] = df["change_shares"].abs()
-    df["price"] = df["price"].fillna(0)
-    df["total_price"] = df["total_price"].fillna(0)
-    df["after_shares"] = df["after_shares"].fillna(0)
-    df["change_ratio"] = df["change_ratio"].apply(lambda x: round(x / 100, 6) if pd.notna(x) else None)
+    logger.info('开始规范化增减持数据')
+    normalized = df.copy()
+    normalized['change_type'] = normalized['change_shares'].apply(parse_change_type)
+    normalized['change_shares'] = normalized['change_shares'].abs()
+    normalized['price'] = normalized['price'].fillna(0)
+    normalized['total_price'] = normalized['total_price'].fillna(0)
+    normalized['after_shares'] = normalized['after_shares'].fillna(0)
+    normalized['change_ratio'] = normalized['change_ratio'].apply(
+        lambda value: round(value / 100, 6) if pd.notna(value) else None
+    )
 
-    final_df = df[[
-        "trade_date", "stock_code", "stock_name", "change_type",
-        "changer_name", "changer_position", "change_shares", "price",
-        "total_price", "after_shares", "change_ratio", "change_reason"
-    ]]
-    return final_df.to_dict(orient="records")
+    final_df = normalized[
+        [
+            'trade_date',
+            'stock_code',
+            'stock_name',
+            'change_type',
+            'changer_name',
+            'changer_position',
+            'change_shares',
+            'price',
+            'total_price',
+            'after_shares',
+            'change_ratio',
+            'change_reason',
+        ]
+    ]
+
+    return dataframe_to_records(final_df)
 
 
-# 插入数据
-def insert_rows(rows: list):
+def insert_rows(conn, rows: list[dict]):
     if not rows:
-        logging.info("No new rows to insert.")
+        logger.info('没有需要写入的增减持记录')
         return
 
-    logging.info(f"Inserting {len(rows)} records into database...")
-    engine = get_db_engine()
-    with engine.begin() as conn:
-        insert_stmt = text("""
-            INSERT INTO daily_stock_change (
-                trade_date, stock_code, stock_name, change_type, changer_name, 
-                changer_position, change_shares, price, total_price, after_shares, 
-                change_ratio, change_reason
-            )
-            VALUES (
-                :trade_date, :stock_code, :stock_name, :change_type, :changer_name, 
-                :changer_position, :change_shares, :price, :total_price, :after_shares, 
-                :change_ratio, :change_reason
-            )
-            ON DUPLICATE KEY UPDATE 
-                price=VALUES(price), total_price=VALUES(total_price), 
-                change_ratio=VALUES(change_ratio), change_reason=VALUES(change_reason),
-                update_time=CURRENT_TIMESTAMP
-        """)
-        conn.execute(insert_stmt, rows)
-    logging.info("Insert complete.")
+    insert_stmt = text(
+        """
+        INSERT INTO daily_stock_change (
+            trade_date, stock_code, stock_name, change_type, changer_name,
+            changer_position, change_shares, price, total_price, after_shares,
+            change_ratio, change_reason
+        )
+        VALUES (
+            :trade_date, :stock_code, :stock_name, :change_type, :changer_name,
+            :changer_position, :change_shares, :price, :total_price, :after_shares,
+            :change_ratio, :change_reason
+        )
+        ON DUPLICATE KEY UPDATE
+            stock_name = VALUES(stock_name),
+            changer_name = VALUES(changer_name),
+            changer_position = VALUES(changer_position),
+            change_shares = VALUES(change_shares),
+            price = VALUES(price),
+            total_price = VALUES(total_price),
+            after_shares = VALUES(after_shares),
+            change_ratio = VALUES(change_ratio),
+            change_reason = VALUES(change_reason),
+            update_time = CURRENT_TIMESTAMP
+        """
+    )
+
+    for start in range(0, len(rows), DB_WRITE_BATCH_SIZE):
+        batch = rows[start : start + DB_WRITE_BATCH_SIZE]
+        conn.execute(insert_stmt, batch)
+
+    logger.info('增减持写入完成，总记录=%s，批次大小=%s', len(rows), DB_WRITE_BATCH_SIZE)
 
 
-# 更新 stock_base 表
-def update_stock_base():
-    logging.info("Updating stock_base table...")
-    engine = get_db_engine()
+def refresh_stock_base(conn):
+    logger.info('开始刷新 stock_base 派生数据')
+    result = conn.execute(
+        text(
+            """
+            SELECT
+                stock_code,
+                SUBSTRING_INDEX(GROUP_CONCAT(stock_name ORDER BY trade_date DESC SEPARATOR ','), ',', 1) AS stock_name,
+                MIN(trade_date) AS begin_time
+            FROM daily_stock_change
+            GROUP BY stock_code
+            """
+        )
+    )
+    rows = [dict(row._mapping) for row in result.fetchall()]
 
-    # 获取最大时间
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT IFNULL(MAX(begin_time), '1970-01-01') FROM stock_base"))
-        max_time = result.scalar()
+    if not rows:
+        logger.info('daily_stock_change 为空，跳过刷新 stock_base')
+        return
 
-    # 查询需要插入的数据
-    with engine.connect() as conn:
-        query = text("""
-            SELECT stock_code, stock_name, MIN(trade_date) AS begin_time 
-            FROM daily_stock_change 
-            WHERE trade_date > :max_time 
-            GROUP BY stock_code, stock_name
-        """)
-        result = conn.execute(query, {"max_time": max_time})
-        to_insert = result.fetchall()
+    upsert_stmt = text(
+        """
+        INSERT INTO stock_base (stock_code, stock_name, begin_time)
+        VALUES (:stock_code, :stock_name, :begin_time)
+        ON DUPLICATE KEY UPDATE
+            stock_name = VALUES(stock_name),
+            begin_time = VALUES(begin_time)
+        """
+    )
 
-    # 插入数据
-    if to_insert:
-        insert_stmt = text("""
-            INSERT IGNORE INTO stock_base (stock_code, stock_name, begin_time) 
-            VALUES (:stock_code, :stock_name, :begin_time)
-        """)
-        with engine.begin() as conn:
-            conn.execute(insert_stmt, [dict(row._mapping) for row in to_insert])
+    for start in range(0, len(rows), DB_WRITE_BATCH_SIZE):
+        batch = rows[start : start + DB_WRITE_BATCH_SIZE]
+        conn.execute(upsert_stmt, batch)
 
-    logging.info("stock_base update completed.")
+    logger.info('stock_base 刷新完成，总股票数=%s', len(rows))
 
 
-# 主流程
 def run_importer():
+    logger.info('=== 增减持导入任务开始 ===')
+    sync_start_date = get_sync_start_date()
+    df = fetch_incremental_data(sync_start_date)
+    if df.empty:
+        logger.info('回看窗口内没有新增或修正数据')
+        logger.info('=== 增减持导入任务结束 ===')
+        return
+
+    records = normalize_data(df)
+    engine = get_db_engine()
     try:
-        logging.info("=== Daily Stock Change Script Started ===")
-        latest_date = get_latest_trade_date()
-        df = fetch_filtered_data(latest_date)
-        if df.empty:
-            logging.info("No new data from akshare.")
-        else:
-            records = normalize_data(df)
-            insert_rows(records)
-            update_stock_base()
-        logging.info("=== Script Completed Successfully ===")
+        with engine.begin() as conn:
+            insert_rows(conn, records)
+            refresh_stock_base(conn)
     except Exception:
-        logging.exception("An error occurred during execution.")
+        logger.exception('增减持导入任务失败')
+        raise
+
+    logger.info('=== 增减持导入任务结束，写入记录=%s ===', len(records))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     run_importer()

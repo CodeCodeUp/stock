@@ -1,4 +1,3 @@
-import logging
 import os
 import threading
 from datetime import datetime
@@ -11,14 +10,11 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from runtime import get_logger
 from stock_change_importer import run_importer
 from stock_price_tracking import run_price_tracking
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='scheduler.log',
-)
+logger = get_logger('scheduler')
 
 TIMEZONE = ZoneInfo(os.getenv('SCHEDULER_TIMEZONE', 'Asia/Shanghai'))
 ENABLE_IMPORTER = os.getenv('ENABLE_IMPORTER', 'true').lower() == 'true'
@@ -44,7 +40,7 @@ def refresh_trade_days_if_needed():
         _TRADE_DAYS.update(trade_dates.tolist())
         _TRADE_DAYS_REFRESHED_AT = today
     except Exception:
-        logging.exception('刷新交易日历失败，回退到工作日判断')
+        logger.exception('刷新交易日历失败，回退到工作日判断')
         _TRADE_DAYS.clear()
         _TRADE_DAYS_REFRESHED_AT = today
 
@@ -60,25 +56,25 @@ def run_locked_job(job_name, lock, job_func, trading_day_only=True):
     now = datetime.now(TIMEZONE)
 
     if trading_day_only and not is_trading_day(now):
-        logging.info('[%s] 非交易日，跳过执行', job_name)
+        logger.info('[%s] 非交易日，跳过执行', job_name)
         return
 
     if not lock.acquire(blocking=False):
-        logging.warning('[%s] 上一次任务未结束，跳过本次执行', job_name)
+        logger.warning('[%s] 上一次任务未结束，跳过本次执行', job_name)
         return
 
     try:
-        logging.info('[%s] 开始执行', job_name)
+        logger.info('[%s] 开始执行', job_name)
         job_func()
-        logging.info('[%s] 执行完成', job_name)
+        logger.info('[%s] 执行完成', job_name)
     except Exception:
-        logging.exception('[%s] 执行失败', job_name)
+        logger.exception('[%s] 执行失败', job_name)
+        raise
     finally:
         lock.release()
 
 
 def register_jobs(scheduler: BaseScheduler):
-
     if ENABLE_PRICE_TRACKING:
         scheduler.add_job(
             lambda: run_locked_job('price-tracking', _PRICE_TRACKING_LOCK, run_price_tracking),
@@ -118,25 +114,30 @@ def create_scheduler(scheduler_cls=BlockingScheduler):
 def log_registered_jobs(scheduler: BaseScheduler):
     jobs = scheduler.get_jobs()
     if not jobs:
-        logging.warning('未启用任何定时任务，请检查 ENABLE_IMPORTER / ENABLE_PRICE_TRACKING')
+        logger.warning('未启用任何定时任务，请检查 ENABLE_IMPORTER / ENABLE_PRICE_TRACKING')
         return
 
     for job in jobs:
-        logging.info('已注册任务: id=%s next_run=%s', job.id, job.next_run_time)
+        try:
+            next_run_time = job.next_run_time
+        except AttributeError:
+            next_run_time = 'pending'
+
+        logger.info('已注册任务: id=%s next_run=%s', job.id, next_run_time)
 
 
 def start_background_scheduler():
     scheduler = create_scheduler(BackgroundScheduler)
-    log_registered_jobs(scheduler)
     scheduler.start()
-    logging.info('内嵌调度器已启动，时区=%s', TIMEZONE)
+    log_registered_jobs(scheduler)
+    logger.info('内嵌调度器已启动，时区=%s', TIMEZONE)
     return scheduler
 
 
 def start_blocking_scheduler():
     scheduler = create_scheduler(BlockingScheduler)
     log_registered_jobs(scheduler)
-    logging.info('独立调度器启动，时区=%s', TIMEZONE)
+    logger.info('独立调度器启动，时区=%s', TIMEZONE)
     scheduler.start()
 
 

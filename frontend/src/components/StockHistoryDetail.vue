@@ -1,57 +1,49 @@
 <template>
   <el-dialog
     v-model="dialogVisible"
-    :title="`${stockName} (${stockCode}) 所有历史数据`"
-    width="80%"
+    :title="`${stockName} (${stockCode}) 历史走势`"
+    width="min(1180px, 96vw)"
+    top="4vh"
     destroy-on-close
     append-to-body
-    :modal="true"
   >
-    <div v-loading="loading">
-      <div class="history-chart-container">
+    <div class="history-detail" v-loading="loading">
+      <div class="history-summary">
+        <div>
+          <p class="summary-eyebrow">完整回溯</p>
+          <h3>历史价格与事件</h3>
+        </div>
+        <p class="summary-text">变动人：{{ changerNames || '未提供' }}</p>
+      </div>
+
+      <div class="history-chart-card">
         <div ref="chartRef" class="history-chart"></div>
       </div>
 
-      <div
-        class="history-marks-detail"
-        v-if="stockDetail && stockDetail.marks && stockDetail.marks.length > 0"
-      >
-        <h4>历史增减持记录</h4>
-        <el-table :data="stockDetail.marks" stripe size="small" style="width: 100%">
-          <el-table-column prop="tradeDate" label="交易日期" width="120" />
-          <el-table-column prop="changeType" label="变动类型" width="100">
-            <template #default="scope">
-              <span :class="scope.row.changeType === '增持' ? 'increase' : 'decrease'">
-                {{ scope.row.changeType }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column label="交易金额" width="150">
-            <template #default="scope">
-              <span :class="scope.row.changeType === '增持' ? 'increase' : 'decrease'">
-                {{ formatNumber(scope.row.totalPrice) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="price" label="成交价" width="120" />
-          <el-table-column prop="changerName" label="变动人" />
-          <el-table-column prop="changerPosition" label="职位" />
-        </el-table>
-      </div>
+      <ChangeMarkTable
+        v-if="stockDetail?.marks?.length"
+        :marks="stockDetail.marks"
+        title="完整历史增减持记录"
+      />
+
+      <el-empty v-else-if="!loading" description="未获取到历史增减持记录" />
     </div>
   </el-dialog>
 </template>
 
 <script lang="ts">
 import { defineComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
+import type { ECharts } from 'echarts/core'
+import ChangeMarkTable from './DataMonitor/ChangeMarkTable.vue'
 import { fetchStockHistoryDetail } from '@/services/stockApi'
-import { prepareChartData, createChartOption, initChart } from '@/utils/chart'
-import { formatNumber } from '@/utils/formatters'
 import type { StockDetailData } from '@/types/stock'
 
 export default defineComponent({
   name: 'StockHistoryDetail',
+  components: {
+    ChangeMarkTable,
+  },
   props: {
     visible: {
       type: Boolean,
@@ -76,7 +68,7 @@ export default defineComponent({
     const loading = ref(false)
     const stockDetail = ref<StockDetailData | null>(null)
     const chartRef = ref<HTMLElement | null>(null)
-    let chartInstance: echarts.ECharts | null = null
+    let chartInstance: ECharts | null = null
 
     const cleanupChart = () => {
       if (chartInstance) {
@@ -85,47 +77,50 @@ export default defineComponent({
       }
     }
 
-    const initHistoryChart = () => {
-      if (!stockDetail.value || !stockDetail.value.priceData || !chartRef.value) {
+    const initHistoryChart = async () => {
+      if (!stockDetail.value?.priceData?.length || !chartRef.value) {
         return
       }
 
       cleanupChart()
-
+      const { createChartOption, initChart, prepareChartData } = await import('@/utils/chart')
       const { dates, prices, markData } = prepareChartData(stockDetail.value)
-      const title = `${props.stockName} (${props.stockCode}) 价格走势`
-      const option = createChartOption(title, dates, prices, markData)
-
-      chartInstance = initChart(chartRef.value, option)
+      chartInstance = initChart(
+        chartRef.value,
+        createChartOption(`${props.stockName} (${props.stockCode}) 历史价格走势`, dates, prices, markData),
+      )
     }
 
     const fetchHistoryData = async () => {
-      if (!props.stockCode) return
+      if (!props.stockCode || !props.changerNames) {
+        stockDetail.value = null
+        ElMessage.warning('缺少变动人信息，无法查询完整历史')
+        return
+      }
 
       loading.value = true
       try {
         stockDetail.value = await fetchStockHistoryDetail(props.stockCode, props.changerNames)
-        nextTick(() => {
-          initHistoryChart()
+        nextTick(async () => {
+          await initHistoryChart()
         })
-      } catch {
+      } catch (error) {
         stockDetail.value = null
+        ElMessage.error(error instanceof Error ? error.message : '获取历史详情失败')
       } finally {
         loading.value = false
       }
     }
 
     const handleResize = () => {
-      if (chartInstance) {
-        chartInstance.resize()
-      }
+      chartInstance?.resize()
     }
 
     watch(
       () => props.visible,
-      (newValue) => {
-        dialogVisible.value = newValue
-        if (newValue) {
+      (value) => {
+        dialogVisible.value = value
+        if (value) {
           fetchHistoryData()
         }
       },
@@ -134,8 +129,8 @@ export default defineComponent({
 
     watch(
       () => dialogVisible.value,
-      (newValue) => {
-        if (!newValue) {
+      (value) => {
+        if (!value) {
           emit('update:visible', false)
           cleanupChart()
         }
@@ -152,46 +147,69 @@ export default defineComponent({
     })
 
     return {
+      chartRef,
       dialogVisible,
       loading,
       stockDetail,
-      chartRef,
-      formatNumber,
     }
   },
 })
 </script>
 
 <style scoped>
-.history-chart-container {
-  width: 100%;
-  height: 400px;
-  margin-bottom: 20px;
+.history-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.history-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.summary-eyebrow {
+  margin: 0 0 4px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.history-summary h3 {
+  margin: 0;
+  font-size: 22px;
+  color: var(--text-primary);
+}
+
+.summary-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.history-chart-card {
+  border-radius: 24px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.98);
+  padding: 18px;
 }
 
 .history-chart {
   width: 100%;
-  height: 100%;
+  height: 420px;
 }
 
-.history-marks-detail {
-  margin-top: 20px;
-}
+@media (max-width: 768px) {
+  .history-summary {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 
-.history-marks-detail h4 {
-  margin-bottom: 16px;
-  font-weight: 500;
-  color: #303133;
-  font-size: 15px;
-}
-
-.increase {
-  color: #f56c6c;
-  font-weight: 600;
-}
-
-.decrease {
-  color: #67c23a;
-  font-weight: 600;
+  .history-chart {
+    height: 300px;
+  }
 }
 </style>

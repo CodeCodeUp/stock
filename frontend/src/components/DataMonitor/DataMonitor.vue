@@ -1,254 +1,229 @@
 <template>
-  <div class="data-monitor">
-    <div class="monitor-header">
-      <div class="title">
-        <h2>数据监控</h2>
-        <div class="subtitle">变动情况</div>
+  <div class="monitor-page">
+    <section class="filter-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="panel-eyebrow">筛选条件</p>
+          <h2>快速定位重点股票</h2>
+        </div>
+        <p class="panel-desc">默认展示本月增持金额超过 10 万的股票。</p>
       </div>
 
-      <div class="filter-controls">
-        <div class="filter-row">
-          <div class="filter-item">
-            <label class="filter-label">日期范围</label>
-            <el-date-picker
-              v-model="dateRange"
-              type="daterange"
-              range-separator="至"
-              start-placeholder="开始日期"
-              end-placeholder="结束日期"
-              :shortcuts="shortcuts"
-              format="YYYY-MM-DD"
-              value-format="YYYY-MM-DD"
-              class="date-picker"
-            />
-          </div>
+      <div class="filter-grid">
+        <div class="filter-item filter-item-wide">
+          <label class="filter-label">日期范围</label>
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            :shortcuts="shortcuts"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
+            class="field-control"
+          />
+        </div>
 
-          <div class="filter-item">
-            <label class="filter-label">变动类型</label>
-            <el-select v-model="changeType" placeholder="变动类型" class="change-type-select">
-              <el-option label="全部" value=""></el-option>
-              <el-option label="增持" value="增持"></el-option>
-              <el-option label="减持" value="减持"></el-option>
-            </el-select>
-          </div>
+        <div class="filter-item">
+          <label class="filter-label">变动方向</label>
+          <el-select v-model="changeType" placeholder="全部" class="field-control">
+            <el-option label="全部" value="" />
+            <el-option label="增持" value="增持" />
+            <el-option label="减持" value="减持" />
+          </el-select>
+        </div>
 
-          <div class="filter-item">
-            <label class="filter-label">金额筛选</label>
-            <el-input
-              v-model.number="totalPrice"
-              placeholder="请输入金额"
-              type="number"
-              :min="0"
-              :step="1000"
-              clearable
-              class="amount-input"
-            >
-              <template #prepend>￥</template>
-            </el-input>
-          </div>
+        <div class="filter-item">
+          <label class="filter-label">金额门槛</label>
+          <el-input
+            v-model.number="totalPrice"
+            placeholder="例如 100000"
+            type="number"
+            :min="0"
+            :step="1000"
+            clearable
+            class="field-control"
+          >
+            <template #prepend>¥</template>
+          </el-input>
+        </div>
 
-          <div class="filter-item">
-            <el-button type="primary" @click="fetchData" :loading="loading" class="search-button">
-              <el-icon><SearchIcon /></el-icon>
-              搜索
-            </el-button>
-          </div>
+        <div class="filter-action">
+          <el-button type="primary" @click="handleSearch" :loading="loading" class="search-button">
+            立即查询
+          </el-button>
         </div>
       </div>
-    </div>
+    </section>
 
-    <StockTable
-      :display-data="displayData"
-      :loading="loading"
-      :header-style="headerStyle"
-      :current-page="currentPage"
-      :page-size="pageSize"
-      :total-count="totalCount"
-      @expand-change="handleExpandChange"
-      @sort-change="handleSortChange"
-      @size-change="handleSizeChange"
-      @current-change="handleCurrentChange"
-    />
+    <section class="table-panel">
+      <StockTable
+        :display-data="displayData"
+        :date-range="dateRange"
+        :loading="loading"
+        :header-style="headerStyle"
+        :current-page="currentPage"
+        :page-size="pageSize"
+        :total-count="totalCount"
+        :empty-description="emptyDescription"
+        @sort-change="handleSortChange"
+        @size-change="handleSizeChange"
+        @current-change="handleCurrentChange"
+      />
+    </section>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent } from 'vue'
-import { Search as SearchIcon } from '@element-plus/icons-vue'
-import { useStockData } from '@/composables/useStockData'
-import { useChart } from '@/composables/useChart'
+import { computed, defineComponent } from 'vue'
 import StockTable from './StockTable.vue'
+import { useStockData } from '@/composables/useStockData'
 
 export default defineComponent({
   name: 'DataMonitor',
   components: {
     StockTable,
-    SearchIcon,
   },
   setup() {
-    // Use composables
-    const stockDataComposable = useStockData()
-    const chartComposable = useChart()
+    const stockData = useStockData()
+
+    const handleSearch = () => {
+      stockData.fetchData(1)
+    }
+
+    const emptyDescription = computed(() => {
+      if (stockData.loading.value) {
+        return '数据加载中'
+      }
+      return '当前筛选条件下没有找到符合条件的股票'
+    })
 
     return {
-      // Stock data composable
-      ...stockDataComposable,
-
-      // Chart composable
-      ...chartComposable,
+      ...stockData,
+      emptyDescription,
+      handleSearch,
     }
   },
 })
 </script>
 
 <style scoped>
-.data-monitor {
-  background-color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  padding: 20px;
-  width: 100%;
-  position: relative;
-  z-index: 1;
+.monitor-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.monitor-header {
+.filter-panel,
+.table-panel {
+  position: relative;
+  border-radius: 30px;
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+  overflow: hidden;
+}
+
+.filter-panel,
+.table-panel {
+  min-width: 0;
+  overflow: visible;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 26px;
+}
+
+.panel-heading {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-  border-bottom: 1px solid #eaeaea;
-  padding-bottom: 16px;
-}
-
-.title h2 {
-  margin: 0;
-  font-weight: 600;
-  color: #303133;
-  font-size: 22px;
-}
-
-.subtitle {
-  color: #909399;
-  font-size: 14px;
-  margin-top: 5px;
-}
-
-.filter-controls {
-  width: 100%;
-}
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 20px;
-  margin-top: 10px;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.panel-eyebrow {
+  margin: 0 0 4px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.panel-heading h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 24px;
+}
+
+.panel-desc {
+  max-width: 520px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 0.8fr 0.8fr auto;
+  gap: 16px;
+  align-items: end;
 }
 
 .filter-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.filter-item-wide {
   min-width: 0;
 }
 
 .filter-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: #606266;
-  margin-bottom: 0;
-  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
-.date-picker {
-  width: 280px;
+.field-control {
+  width: 100%;
 }
 
-.change-type-select {
-  width: 140px;
-}
-
-.amount-input {
-  width: 180px;
+.filter-action {
+  display: flex;
 }
 
 .search-button {
-  height: 40px;
-  padding: 0 20px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  min-width: 136px;
+  height: 42px;
+  border-radius: 14px;
 }
 
-/* 手机端适配 */
+@media (max-width: 1100px) {
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 768px) {
-  .data-monitor {
-    padding: 15px;
-    border-radius: 0;
-    box-shadow: none;
+  .filter-panel,
+  .table-panel {
+    padding: 18px;
+    border-radius: 24px;
   }
 
-  .monitor-header {
+  .panel-heading {
     flex-direction: column;
     align-items: flex-start;
-    gap: 15px;
   }
 
-  .filter-controls {
-    width: 100%;
+  .filter-grid {
+    grid-template-columns: 1fr;
   }
 
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 15px;
-  }
-
-  .filter-item {
-    width: 100%;
-  }
-
-  .date-picker,
-  .change-type-select,
-  .amount-input {
-    width: 100%;
-  }
-
+  .filter-action,
   .search-button {
     width: 100%;
-    height: 44px;
-    justify-content: center;
-    font-size: 16px;
-  }
-
-  .filter-label {
-    font-size: 15px;
-    font-weight: 600;
-  }
-}
-
-/* 小屏手机适配 */
-@media (max-width: 480px) {
-  .data-monitor {
-    padding: 10px;
-  }
-
-  .title h2 {
-    font-size: 20px;
-  }
-
-  .subtitle {
-    font-size: 13px;
-  }
-
-  .filter-row {
-    gap: 12px;
-  }
-
-  .search-button {
-    height: 48px;
-    font-size: 16px;
   }
 }
 </style>

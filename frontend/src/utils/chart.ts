@@ -1,98 +1,91 @@
-/**
- * Chart Utilities
- * Common chart configuration and helper functions
- */
-
-import * as echarts from 'echarts'
+import { LineChart } from 'echarts/charts'
+import {
+  DataZoomComponent,
+  GridComponent,
+  MarkPointComponent,
+  TitleComponent,
+  TooltipComponent,
+} from 'echarts/components'
+import * as echarts from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { ECharts, EChartsCoreOption } from 'echarts/core'
 import type { ChartMarkData, MarkItem, PriceDataItem } from '@/types/stock'
-import { formatNumber, formatDateTime } from './formatters'
+import { formatCurrency, formatDate, formatDateTime } from './formatters'
 
-/**
- * Default chart colors
- */
+echarts.use([
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  MarkPointComponent,
+  TitleComponent,
+  CanvasRenderer,
+])
+
 export const CHART_COLORS = {
-  INCREASE: '#f56c6c', // Red for increase
-  DECREASE: '#67c23a', // Green for decrease
-  LINE: '#409EFF', // Blue for line
+  increase: '#d14836',
+  decrease: '#15825d',
+  line: '#2350a8',
+  fill: 'rgba(35, 80, 168, 0.12)',
+  axis: '#6b7280',
+  split: 'rgba(148, 163, 184, 0.18)',
 } as const
 
-/**
- * Create chart mark data from stock marks
- * @param marks - Array of mark items
- * @param priceData - Array of price data
- * @param dates - Array of formatted dates
- * @param prices - Array of prices
- * @returns Array of chart mark data
- */
+const buildDatePointMap = (priceData: PriceDataItem[]) => {
+  const dateMap = new Map<string, Array<{ index: number; price: number }>>()
+
+  priceData.forEach((item, index) => {
+    const key = formatDate(item.trackTime)
+    const points = dateMap.get(key) ?? []
+    points.push({ index, price: item.currentPrice })
+    dateMap.set(key, points)
+  })
+
+  return dateMap
+}
+
 export const createChartMarkData = (
   marks: MarkItem[],
   priceData: PriceDataItem[],
   dates: string[],
   prices: number[],
 ): ChartMarkData[] => {
-  const markData: ChartMarkData[] = []
+  const dateMap = buildDatePointMap(priceData)
 
-  marks.forEach((mark) => {
-    // Find all price data points for the same date
-    const sameDayPrices = priceData.filter(
-      (price) => new Date(price.trackTime).toISOString().split('T')[0] === mark.tradeDate,
-    )
-
-    if (sameDayPrices.length > 0) {
-      // Find the closest price data point
-      let closestPriceData = sameDayPrices[0]
-      let closestPriceIndex = priceData.indexOf(closestPriceData)
-
-      // If mark has specific price, find the closest match
-      if (mark.price) {
-        let minDiff = Math.abs(sameDayPrices[0].currentPrice - mark.price)
-
-        for (const priceDataItem of sameDayPrices) {
-          const priceDiff = Math.abs(priceDataItem.currentPrice - mark.price)
-          if (priceDiff < minDiff) {
-            minDiff = priceDiff
-            closestPriceData = priceDataItem
-            closestPriceIndex = priceData.indexOf(priceDataItem)
-          }
-        }
-      }
-
-      if (closestPriceIndex >= 0) {
-        markData.push({
-          name: mark.changeType,
-          coord: [dates[closestPriceIndex], prices[closestPriceIndex]],
-          value: `${formatNumber(mark.totalPrice)} (¥${mark.price})`,
-          itemStyle: {
-            color: mark.changeType === '增持' ? CHART_COLORS.INCREASE : CHART_COLORS.DECREASE,
-          },
-        })
-      }
+  return marks.reduce<ChartMarkData[]>((result, mark) => {
+    const points = dateMap.get(mark.tradeDate)
+    if (!points || points.length === 0) {
+      return result
     }
-  })
 
-  return markData
+    let targetPoint = points[0]
+    if (mark.price !== null && mark.price !== undefined) {
+      targetPoint = points.reduce((closest, current) => {
+        const currentDiff = Math.abs(current.price - mark.price!)
+        const closestDiff = Math.abs(closest.price - mark.price!)
+        return currentDiff < closestDiff ? current : closest
+      }, points[0])
+    }
+
+    result.push({
+      name: mark.changeType,
+      coord: [dates[targetPoint.index], prices[targetPoint.index]],
+      value: `${formatCurrency(mark.totalPrice)} / ${formatCurrency(mark.price)}`,
+      itemStyle: {
+        color: mark.changeType === '增持' ? CHART_COLORS.increase : CHART_COLORS.decrease,
+      },
+    })
+
+    return result
+  }, [])
 }
 
-/**
- * Prepare chart data from stock detail
- * @param stockDetail - Stock detail data
- * @returns Object with dates, prices, and mark data
- */
 export const prepareChartData = (stockDetail: {
   priceData: PriceDataItem[]
   marks?: MarkItem[]
 }) => {
-  const dates: string[] = []
-  const prices: number[] = []
-
-  // Process price data
-  stockDetail.priceData.forEach((item) => {
-    const dateTime = formatDateTime(item.trackTime)
-    dates.push(dateTime)
-    prices.push(item.currentPrice)
-  })
-
-  // Process marks if available
+  const dates = stockDetail.priceData.map((item) => formatDateTime(item.trackTime))
+  const prices = stockDetail.priceData.map((item) => item.currentPrice)
   const markData = stockDetail.marks
     ? createChartMarkData(stockDetail.marks, stockDetail.priceData, dates, prices)
     : []
@@ -100,122 +93,113 @@ export const prepareChartData = (stockDetail: {
   return { dates, prices, markData }
 }
 
-/**
- * Create chart tooltip formatter
- * @param markData - Array of chart mark data
- * @returns Tooltip formatter function
- */
 export const createTooltipFormatter = (markData: ChartMarkData[]) => {
-  return function (params: { name: string; marker: string; value: number }[]) {
-    let result = params[0].name + '<br/>'
-    result += params[0].marker + ' 价格: ' + params[0].value
+  return function (params: Array<{ name: string; marker: string; value: number }>) {
+    const point = params[0]
+    let result = `${point.name}<br/>${point.marker} 价格: ${point.value}`
+    const markInfo = markData.find((mark) => mark.coord[0] === point.name)
 
-    // Find if there's a mark point at this position
-    const markInfo = markData.find((mark) => mark.coord[0] === params[0].name)
     if (markInfo) {
-      result +=
-        '<br/><span style="color:' +
-        markInfo.itemStyle.color +
-        '">● ' +
-        markInfo.name +
-        ': ' +
-        markInfo.value +
-        '</span>'
+      result += `<br/><span style="color:${markInfo.itemStyle.color}">● ${markInfo.name}: ${markInfo.value}</span>`
     }
 
     return result
   }
 }
 
-/**
- * Create default chart option
- * @param title - Chart title
- * @param dates - Array of dates
- * @param prices - Array of prices
- * @param markData - Array of mark data
- * @returns ECharts option object
- */
 export const createChartOption = (
   title: string,
   dates: string[],
   prices: number[],
   markData: ChartMarkData[],
-) => {
-  return {
-    title: {
-      text: title,
-      left: 'center',
-      textStyle: {
-        fontSize: 14,
+): EChartsCoreOption => ({
+  title: {
+    text: title,
+    left: 'center',
+    textStyle: {
+      fontSize: 14,
+      fontWeight: 600,
+      color: '#172033',
+    },
+  },
+  grid: {
+    top: 56,
+    left: 24,
+    right: 24,
+    bottom: 40,
+    containLabel: true,
+  },
+  tooltip: {
+    trigger: 'axis',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderWidth: 0,
+    textStyle: {
+      color: '#f8fafc',
+    },
+    formatter: createTooltipFormatter(markData),
+  },
+  xAxis: {
+    type: 'category',
+    data: dates,
+    boundaryGap: false,
+    axisLine: {
+      lineStyle: { color: CHART_COLORS.split },
+    },
+    axisLabel: {
+      color: CHART_COLORS.axis,
+      interval: Math.max(0, Math.floor(dates.length / 8)),
+      formatter: (value: string) => `${value.split(' ')[0]}
+${value.split(' ')[1]}`,
+    },
+  },
+  yAxis: {
+    type: 'value',
+    scale: true,
+    axisLabel: {
+      color: CHART_COLORS.axis,
+    },
+    splitLine: {
+      lineStyle: {
+        color: CHART_COLORS.split,
       },
     },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: '3%',
-      containLabel: true,
+  },
+  dataZoom: [
+    {
+      type: 'inside',
+      start: 0,
+      end: 100,
     },
-    tooltip: {
-      trigger: 'axis',
-      formatter: createTooltipFormatter(markData),
+    {
+      height: 18,
+      bottom: 10,
+      start: 0,
+      end: 100,
     },
-    xAxis: {
-      type: 'category',
-      data: dates,
-      axisLabel: {
-        interval: Math.floor(dates.length / 8),
-        formatter: function (value: string) {
-          return value.split(' ')[0] + '\n' + value.split(' ')[1]
-        },
+  ],
+  series: [
+    {
+      type: 'line',
+      data: prices,
+      smooth: true,
+      showSymbol: false,
+      lineStyle: {
+        width: 2.5,
+        color: CHART_COLORS.line,
+      },
+      areaStyle: {
+        color: CHART_COLORS.fill,
+      },
+      markPoint: {
+        symbol: 'pin',
+        symbolSize: 42,
+        data: markData,
       },
     },
-    yAxis: {
-      type: 'value',
-      scale: true,
-      axisLabel: {
-        formatter: '{value}',
-      },
-    },
-    dataZoom: [
-      {
-        type: 'inside',
-        start: 0,
-        end: 100,
-      },
-      {
-        start: 0,
-        end: 100,
-      },
-    ],
-    series: [
-      {
-        type: 'line',
-        data: prices,
-        smooth: true,
-        lineStyle: {
-          width: 2,
-          color: CHART_COLORS.LINE,
-        },
-        markPoint: {
-          symbol: 'pin',
-          symbolSize: 40,
-          data: markData,
-        },
-      },
-    ],
-  }
-}
+  ],
+})
 
-/**
- * Initialize chart instance
- * @param domElement - DOM element to render chart
- * @param option - Chart option
- * @returns ECharts instance
- */
-export const initChart = (
-  domElement: HTMLElement,
-  option: echarts.EChartsCoreOption,
-): echarts.ECharts => {
+export const initChart = (domElement: HTMLElement, option: EChartsCoreOption): ECharts => {
   const chartInstance = echarts.init(domElement)
   chartInstance.setOption(option)
   return chartInstance
