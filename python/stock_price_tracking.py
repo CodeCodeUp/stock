@@ -5,7 +5,7 @@ import akshare as ak
 import pandas as pd
 from sqlalchemy import text
 
-from runtime import get_db_engine, get_env_int, get_logger
+from runtime import get_db_engine, get_env_int, get_logger, wait_for_rate_limit
 
 logger = get_logger('stock_price_tracking')
 
@@ -13,6 +13,7 @@ PRICE_TRACKING_MAX_WORKERS = max(get_env_int('PRICE_TRACKING_MAX_WORKERS', 4), 1
 PRICE_TRACKING_RETRY_TIMES = max(get_env_int('PRICE_TRACKING_RETRY_TIMES', 3), 1)
 PRICE_TRACKING_RETRY_DELAY_SECONDS = max(get_env_int('PRICE_TRACKING_RETRY_DELAY_SECONDS', 1), 0)
 DB_WRITE_BATCH_SIZE = max(get_env_int('DB_WRITE_BATCH_SIZE', 2000), 1)
+EASTMONEY_KLINE_INTERVAL_SECONDS = max(get_env_int('EASTMONEY_KLINE_INTERVAL_SECONDS', 10), 0)
 
 
 def fetch_stock_list():
@@ -143,6 +144,12 @@ def fetch_quote_rows(code, begin):
     start_time = format_begin_time(begin)
     for attempt in range(1, PRICE_TRACKING_RETRY_TIMES + 1):
         try:
+            wait_for_rate_limit(
+                'eastmoney-kline-minute',
+                EASTMONEY_KLINE_INTERVAL_SECONDS,
+                logger=logger,
+                label='30 分钟行情采集',
+            )
             quote = ak.stock_zh_a_hist_min_em(
                 symbol=code,
                 period='30',
@@ -167,9 +174,10 @@ def fetch_quote_rows(code, begin):
 
 def run_price_tracking():
     logger.info(
-        '开始价格跟踪，最大并发=%s，重试次数=%s',
+        '开始价格跟踪，最大并发=%s，重试次数=%s，东财 K 线最小间隔=%s 秒',
         PRICE_TRACKING_MAX_WORKERS,
         PRICE_TRACKING_RETRY_TIMES,
+        EASTMONEY_KLINE_INTERVAL_SECONDS,
     )
     stock_df = fetch_stock_list()
     if stock_df.empty:

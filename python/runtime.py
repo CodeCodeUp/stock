@@ -1,6 +1,8 @@
 import logging
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +11,9 @@ from sqlalchemy import create_engine
 _ENGINE = None
 _LOGGING_CONFIGURED = False
 _DOTENV_LOADED = False
+_RATE_LIMIT_STATE_LOCK = threading.Lock()
+_RATE_LIMIT_LOCKS: dict[str, threading.Lock] = {}
+_RATE_LIMIT_LAST_CALLED_AT: dict[str, float] = {}
 
 
 def load_dotenv_if_exists() -> None:
@@ -77,6 +82,26 @@ def configure_logging() -> None:
 def get_logger(name: str) -> logging.Logger:
     configure_logging()
     return logging.getLogger(name)
+
+
+def wait_for_rate_limit(key: str, interval_seconds: int, logger: logging.Logger | None = None, label: str | None = None) -> None:
+    if interval_seconds <= 0:
+        return
+
+    with _RATE_LIMIT_STATE_LOCK:
+        rate_lock = _RATE_LIMIT_LOCKS.setdefault(key, threading.Lock())
+
+    with rate_lock:
+        now = time.monotonic()
+        last_called_at = _RATE_LIMIT_LAST_CALLED_AT.get(key)
+        if last_called_at is not None:
+            wait_seconds = interval_seconds - (now - last_called_at)
+            if wait_seconds > 0:
+                if logger is not None:
+                    logger.info('%s 触发频率限制，等待 %.1f 秒后继续', label or key, wait_seconds)
+                time.sleep(wait_seconds)
+
+        _RATE_LIMIT_LAST_CALLED_AT[key] = time.monotonic()
 
 
 def get_db_engine():

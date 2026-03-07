@@ -7,7 +7,7 @@ import akshare as ak
 import requests
 from flask import Flask, jsonify, request
 
-from runtime import dataframe_to_records, get_env_int, get_logger
+from runtime import dataframe_to_records, get_env_int, get_logger, wait_for_rate_limit
 from scheduler import start_background_scheduler
 
 app = Flask(__name__)
@@ -15,13 +15,16 @@ embedded_scheduler = None
 logger = get_logger('data_api')
 AKSHARE_RETRY_TIMES = max(get_env_int('AKSHARE_RETRY_TIMES', 3), 1)
 AKSHARE_RETRY_DELAY_SECONDS = max(get_env_int('AKSHARE_RETRY_DELAY_SECONDS', 1), 0)
+EASTMONEY_KLINE_INTERVAL_SECONDS = max(get_env_int('EASTMONEY_KLINE_INTERVAL_SECONDS', 10), 0)
 
 
-def call_akshare_with_retry(label: str, func, *args, **kwargs):
+def call_akshare_with_retry(label: str, func, *args, rate_limit_key: str | None = None, rate_limit_seconds: int = 0, **kwargs):
     last_exception = None
 
     for attempt in range(1, AKSHARE_RETRY_TIMES + 1):
         try:
+            if rate_limit_key:
+                wait_for_rate_limit(rate_limit_key, rate_limit_seconds, logger=logger, label=label)
             return func(*args, **kwargs)
         except requests.exceptions.RequestException as exc:
             last_exception = exc
@@ -87,6 +90,8 @@ def get_stock_hist_day():
         quote = call_akshare_with_retry(
             '获取历史行情',
             ak.stock_zh_a_hist,
+            rate_limit_key='eastmoney-kline-daily',
+            rate_limit_seconds=EASTMONEY_KLINE_INTERVAL_SECONDS,
             symbol=code,
             period=period,
             start_date=begin,
