@@ -46,23 +46,26 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (id.includes('node_modules/vue')) {
-              return 'vue-vendor'
-            }
-
-            if (id.includes('node_modules/element-plus')) {
-              return 'ui-vendor'
-            }
-
-            if (id.includes('node_modules/zrender')) {
-              return 'chart-runtime'
-            }
-
-            if (id.includes('node_modules/echarts')) {
-              if (/(?:\\|\/)echarts(?:\\|\/)(?:charts|components|renderers)(?:\\|\/)/.test(id)) {
-                return 'chart-modules'
+            if (id.includes('node_modules/')) {
+              // element-plus and its vue dependencies go together to avoid circular refs
+              if (id.includes('/element-plus/') || id.includes('/@element-plus/')) {
+                return 'ui-vendor'
               }
-              return 'chart-core'
+
+              // Only match vue core package, not @vue/* sub-packages that element-plus also uses
+              if (
+                id.includes('/node_modules/vue/') ||
+                id.includes('/@vue/runtime-dom/') ||
+                id.includes('/@vue/runtime-core/') ||
+                id.includes('/@vue/reactivity/') ||
+                id.includes('/@vue/shared/')
+              ) {
+                return 'vue-vendor'
+              }
+
+              if (id.includes('/zrender/') || id.includes('/echarts/')) {
+                return 'chart-vendor'
+              }
             }
           },
         },
