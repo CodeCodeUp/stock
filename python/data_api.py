@@ -74,26 +74,6 @@ def get_stock_hold_management():
         return error_response('获取增减持详情失败', 500)
 
 
-def _to_sina_symbol(code: str) -> str:
-    """将纯数字股票代码转换为新浪格式 (sh/sz 前缀)。"""
-    if code.startswith(('sh', 'sz', 'SH', 'SZ')):
-        return code.lower()
-    if code.startswith(('6', '9')):
-        return f'sh{code}'
-    return f'sz{code}'
-
-
-_SINA_COLUMN_MAP = {
-    'date': '日期',
-    'open': '开盘',
-    'close': '收盘',
-    'high': '最高',
-    'low': '最低',
-    'volume': '成交量',
-    'amount': '成交额',
-}
-
-
 @app.route('/stock_hist_day', methods=['GET'])
 def get_stock_hist_day():
     code = (request.args.get('code') or '').strip()
@@ -106,17 +86,16 @@ def get_stock_hist_day():
     if period not in {'daily', 'weekly', 'monthly'}:
         return error_response('period 只支持 daily、weekly、monthly', 400)
 
-    sina_symbol = _to_sina_symbol(code)
-
     try:
         quote = call_akshare_with_retry(
-            '获取历史行情(新浪)',
-            ak.stock_zh_a_daily,
-            symbol=sina_symbol,
+            '获取历史行情',
+            ak.stock_zh_a_hist,
+            rate_limit_key='eastmoney-kline-daily',
+            rate_limit_seconds=EASTMONEY_KLINE_INTERVAL_SECONDS,
+            symbol=code,
+            period=period,
             start_date=begin,
-            adjust='qfq',
         )
-        quote.rename(columns=_SINA_COLUMN_MAP, inplace=True)
         return jsonify(dataframe_to_records(quote))
     except requests.exceptions.RequestException:
         logger.exception('获取历史行情网络异常，降级为空结果 code=%s begin=%s period=%s', code, begin, period)
