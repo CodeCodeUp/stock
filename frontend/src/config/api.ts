@@ -3,27 +3,26 @@
  * Centralized API endpoints and configuration
  */
 
-// Base API URL - empty in production (nginx proxies), configurable for dev
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
-// API Endpoints
 export const API_ENDPOINTS = {
-  // Stock data endpoints
   STOCK_CHANGES: '/api/stocks/changes',
   STOCK_CHART: '/api/stocks/{stockCode}/chart',
+  BACKTEST_OVERVIEW: '/api/backtest/overview',
+  BACKTEST_EVENTS: '/api/backtest/events',
+  BACKTEST_EVENT_DETAIL: '/api/backtest/events/{eventId}',
+  BACKTEST_STOCK_SUMMARY: '/api/backtest/stocks/{stockCode}/summary',
+  BACKTEST_REBUILD: '/api/backtest/rebuild',
   STOCK_HISTORY_DETAIL: '/data/api/detail/chart',
 } as const
 
-// API Configuration
 export const API_CONFIG = {
-  timeout: 10000, // 10 seconds
+  timeout: 10000,
 } as const
 
-// Helper function to build full URL
 export const buildApiUrl = (endpoint: string, params?: Record<string, string>): string => {
   let url = `${API_BASE_URL}${endpoint}`
 
-  // Replace path parameters
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
       url = url.replace(`{${key}}`, value)
@@ -33,7 +32,6 @@ export const buildApiUrl = (endpoint: string, params?: Record<string, string>): 
   return url
 }
 
-// Helper function to build query string
 export const buildQueryString = (params: object): string => {
   const searchParams = new URLSearchParams()
 

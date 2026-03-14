@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.brich.mapper.BacktestMapper">
+    <sql id="backtestFilters">
+        WHERE 1 = 1
+        <if test="start != null">
+            AND e.signal_date <![CDATA[ >= ]]> #{start}
+        </if>
+        <if test="end != null">
+            AND e.signal_date <![CDATA[ <= ]]> #{end}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (
+                e.stock_code LIKE CONCAT('%', #{keyword}, '%')
+                OR e.stock_name LIKE CONCAT('%', #{keyword}, '%')
+            )
+        </if>
+        <if test="minIncreaseAmount != null">
+            AND e.increase_amount <![CDATA[ >= ]]> #{minIncreaseAmount}
+        </if>
+        <if test="minSignalScore != null">
+            AND e.signal_score <![CDATA[ >= ]]> #{minSignalScore}
+        </if>
+        <if test="minBacktestScore != null">
+            AND COALESCE(s.backtest_score, 0) <![CDATA[ >= ]]> #{minBacktestScore}
+        </if>
+        <if test="hasSameDayDecrease != null">
+            AND e.has_same_day_decrease = #{hasSameDayDecrease}
+        </if>
+    </sql>
+
+    <select id="getBacktestOverview" resultType="com.example.brich.model.BacktestOverview">
+        SELECT
+            COUNT(*) AS totalEvents,
+            COUNT(DISTINCT e.stock_code) AS totalStocks,
+            COALESCE(ROUND(AVG(e.signal_score), 2), 0) AS avgSignalScore,
+            COALESCE(ROUND(AVG(COALESCE(s.backtest_score, 0)), 2), 0) AS avgBacktestScore,
+            COALESCE(ROUND(AVG(COALESCE(m20.is_positive_flag, 0)), 6), 0) AS winRate20d,
+            COALESCE(ROUND(AVG(m20.return_pct), 6), 0) AS avgReturn20d,
+            COALESCE(ROUND(AVG(COALESCE(m60.hit_10pct_flag, 0)), 6), 0) AS hit10PctRate60d,
+            MAX(e.signal_date) AS latestSignalDate
+        FROM stock_signal_event e
+        LEFT JOIN stock_backtest_summary s ON s.stock_code = e.stock_code
+        LEFT JOIN stock_backtest_metric m20
+            ON m20.event_id = e.event_id
+            AND m20.horizon_days = 20
+        LEFT JOIN stock_backtest_metric m60
+            ON m60.event_id = e.event_id
+            AND m60.horizon_days = 60
+        <include refid="backtestFilters" />
+    </select>
+
+    <select id="countBacktestEvents" resultType="long">
+        SELECT COUNT(*)
+        FROM stock_signal_event e
+        LEFT JOIN stock_backtest_summary s ON s.stock_code = e.stock_code
+        <include refid="backtestFilters" />
+    </select>
+
+    <select id="findBacktestEvents" resultType="com.example.brich.model.BacktestEventItem">
+        SELECT
+            e.event_id AS eventId,
+            e.stock_code AS stockCode,
+            e.stock_name AS stockName,
+            e.signal_date AS signalDate,
+            e.event_scope AS eventScope,
+            e.increase_count AS increaseCount,
+            e.increase_amount AS increaseAmount,
+            e.increase_ratio_sum AS increaseRatioSum,
+            e.increase_ratio_max AS increaseRatioMax,
+            e.changer_count AS changerCount,
+            e.changer_names AS changerNames,
+            e.position_tags AS positionTags,
+            e.has_same_day_decrease AS hasSameDayDecrease,
+            e.same_day_decrease_amount AS sameDayDecreaseAmount,
+            e.consecutive_increase_days AS consecutiveIncreaseDays,
+            e.signal_score AS signalScore,
+            COALESCE(s.backtest_score, 0) AS backtestScore,
+            m5.return_pct AS return5d,
+            m10.return_pct AS return10d,
+            m20.return_pct AS return20d,
+            m60.return_pct AS return60d
+        FROM stock_signal_event e
+        LEFT JOIN stock_backtest_summary s ON s.stock_code = e.stock_code
+        LEFT JOIN stock_backtest_metric m5
+            ON m5.event_id = e.event_id
+            AND m5.horizon_days = 5
+        LEFT JOIN stock_backtest_metric m10
+            ON m10.event_id = e.event_id
+            AND m10.horizon_days = 10
+        LEFT JOIN stock_backtest_metric m20
+            ON m20.event_id = e.event_id
+            AND m20.horizon_days = 20
+        LEFT JOIN stock_backtest_metric m60
+            ON m60.event_id = e.event_id
+            AND m60.horizon_days = 60
+        <include refid="backtestFilters" />
+        <choose>
+            <when test="sortBy == 'increaseAmount' and sortOrder == 'asc'">
+                ORDER BY e.increase_amount ASC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'increaseAmount' and sortOrder == 'desc'">
+                ORDER BY e.increase_amount DESC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'signalScore' and sortOrder == 'asc'">
+                ORDER BY e.signal_score ASC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'signalScore' and sortOrder == 'desc'">
+                ORDER BY e.signal_score DESC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'backtestScore' and sortOrder == 'asc'">
+                ORDER BY COALESCE(s.backtest_score, 0) ASC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'backtestScore' and sortOrder == 'desc'">
+                ORDER BY COALESCE(s.backtest_score, 0) DESC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'return20d' and sortOrder == 'asc'">
+                ORDER BY COALESCE(m20.return_pct, 999) ASC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'return20d' and sortOrder == 'desc'">
+                ORDER BY COALESCE(m20.return_pct, -999) DESC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'return60d' and sortOrder == 'asc'">
+                ORDER BY COALESCE(m60.return_pct, 999) ASC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'return60d' and sortOrder == 'desc'">
+                ORDER BY COALESCE(m60.return_pct, -999) DESC, e.signal_date DESC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'signalDate' and sortOrder == 'asc'">
+                ORDER BY e.signal_date ASC, e.stock_code ASC
+            </when>
+            <when test="sortBy == 'signalDate' and sortOrder == 'desc'">
+                ORDER BY e.signal_date DESC, e.stock_code ASC
+            </when>
+            <otherwise>
+                ORDER BY e.signal_date DESC, e.signal_score DESC, e.stock_code ASC
+            </otherwise>
+        </choose>
+        LIMIT #{pageSize} OFFSET #{offset}
+    </select>
+
+    <select id="findStockBacktestSummary" resultType="com.example.brich.model.StockBacktestSummary">
+        SELECT
+            stock_code AS stockCode,
+            stock_name AS stockName,
+            sample_event_count AS sampleEventCount,
+            win_rate_5d AS winRate5d,
+            win_rate_10d AS winRate10d,
+            win_rate_20d AS winRate20d,
+            avg_return_5d AS avgReturn5d,
+            avg_return_10d AS avgReturn10d,
+            avg_return_20d AS avgReturn20d,
+            median_return_20d AS medianReturn20d,
+            avg_max_drawdown_20d AS avgMaxDrawdown20d,
+            hit_5pct_rate_20d AS hit5pctRate20d,
+            hit_10pct_rate_60d AS hit10pctRate60d,
+            historical_response_score AS historicalResponseScore,
+            backtest_score AS backtestScore,
+            last_event_date AS lastEventDate
+        FROM stock_backtest_summary
+        WHERE stock_code = #{code}
+    </select>
+
+    <select id="findBacktestEventById" resultType="com.example.brich.model.BacktestEventItem">
+        SELECT
+            e.event_id AS eventId,
+            e.stock_code AS stockCode,
+            e.stock_name AS stockName,
+            e.signal_date AS signalDate,
+            e.event_scope AS eventScope,
+            e.increase_count AS increaseCount,
+            e.increase_amount AS increaseAmount,
+            e.increase_ratio_sum AS increaseRatioSum,
+            e.increase_ratio_max AS increaseRatioMax,
+            e.changer_count AS changerCount,
+            e.changer_names AS changerNames,
+            e.position_tags AS positionTags,
+            e.has_same_day_decrease AS hasSameDayDecrease,
+            e.same_day_decrease_amount AS sameDayDecreaseAmount,
+            e.consecutive_increase_days AS consecutiveIncreaseDays,
+            e.signal_score AS signalScore,
+            COALESCE(s.backtest_score, 0) AS backtestScore
+        FROM stock_signal_event e
+        LEFT JOIN stock_backtest_summary s ON s.stock_code = e.stock_code
+        WHERE e.event_id = #{eventId}
+    </select>
+
+    <select id="findBacktestMetricsByEventId" resultType="com.example.brich.model.BacktestMetricItem">
+        SELECT
+            horizon_days AS horizonDays,
+            entry_date AS entryDate,
+            entry_price AS entryPrice,
+            entry_price_type AS entryPriceType,
+            exit_date AS exitDate,
+            exit_price AS exitPrice,
+            return_pct AS returnPct,
+            max_return_pct AS maxReturnPct,
+            max_drawdown_pct AS maxDrawdownPct,
+            volatility_pct AS volatilityPct,
+            hit_3pct_flag AS hit3pctFlag,
+            hit_5pct_flag AS hit5pctFlag,
+            hit_10pct_flag AS hit10pctFlag,
+            is_positive_flag AS isPositiveFlag,
+            bars_count AS barsCount
+        FROM stock_backtest_metric
+        WHERE event_id = #{eventId}
+        ORDER BY horizon_days
+    </select>
+
+    <select id="findBacktestPriceBars" resultType="com.example.brich.model.BacktestPriceBar">
+        SELECT
+            trade_date AS tradeDate,
+            open_price AS openPrice,
+            close_price AS closePrice,
+            high_price AS highPrice,
+            low_price AS lowPrice
+        FROM stock_daily_bar
+        WHERE stock_code = #{stockCode}
+        <if test="startDate != null">
+            AND trade_date <![CDATA[ >= ]]> #{startDate}
+        </if>
+        <if test="endDate != null">
+            AND trade_date <![CDATA[ <= ]]> #{endDate}
+        </if>
+        ORDER BY trade_date
+    </select>
+
+    <select id="findBacktestMarks" resultType="com.example.brich.model.StockChangeMark">
+        SELECT
+            trade_date AS tradeDate,
+            stock_code AS stockCode,
+            stock_name AS stockName,
+            change_type AS changeType,
+            ABS(total_price) AS totalPrice,
+            price AS price,
+            changer_name AS changerName,
+            changer_position AS changerPosition
+        FROM daily_stock_change
+        WHERE stock_code = #{stockCode}
+        <if test="startDate != null">
+            AND trade_date <![CDATA[ >= ]]> #{startDate}
+        </if>
+        <if test="endDate != null">
+            AND trade_date <![CDATA[ <= ]]> #{endDate}
+        </if>
+        ORDER BY trade_date
+    </select>
+</mapper>

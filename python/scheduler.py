@@ -10,6 +10,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from backtest_pipeline import run_backtest_pipeline
 from runtime import get_logger
 from stock_change_importer import run_importer
 from stock_price_tracking import run_price_tracking
@@ -19,11 +20,14 @@ logger = get_logger('scheduler')
 TIMEZONE = ZoneInfo(os.getenv('SCHEDULER_TIMEZONE', 'Asia/Shanghai'))
 ENABLE_IMPORTER = os.getenv('ENABLE_IMPORTER', 'true').lower() == 'true'
 ENABLE_PRICE_TRACKING = os.getenv('ENABLE_PRICE_TRACKING', 'true').lower() == 'true'
+ENABLE_BACKTEST_PIPELINE = os.getenv('ENABLE_BACKTEST_PIPELINE', 'true').lower() == 'true'
+ENABLE_BACKTEST_WEEKLY_FULL_REFRESH = os.getenv('ENABLE_BACKTEST_WEEKLY_FULL_REFRESH', 'true').lower() == 'true'
 
 _TRADE_DAYS = set()
 _TRADE_DAYS_REFRESHED_AT = None
 _IMPORTER_LOCK = threading.Lock()
 _PRICE_TRACKING_LOCK = threading.Lock()
+_BACKTEST_LOCK = threading.Lock()
 
 
 def refresh_trade_days_if_needed():
@@ -101,6 +105,35 @@ def register_jobs(scheduler: BaseScheduler):
             max_instances=1,
             coalesce=True,
             misfire_grace_time=600,
+        )
+
+    if ENABLE_BACKTEST_PIPELINE:
+        scheduler.add_job(
+            lambda: run_locked_job(
+                'backtest-pipeline-incremental',
+                _BACKTEST_LOCK,
+                lambda: run_backtest_pipeline('incremental'),
+            ),
+            CronTrigger(day_of_week='mon-fri', hour='18', minute='40', timezone=TIMEZONE),
+            id='backtest_pipeline_incremental',
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=1800,
+        )
+
+    if ENABLE_BACKTEST_PIPELINE and ENABLE_BACKTEST_WEEKLY_FULL_REFRESH:
+        scheduler.add_job(
+            lambda: run_locked_job(
+                'backtest-pipeline-full',
+                _BACKTEST_LOCK,
+                lambda: run_backtest_pipeline('full'),
+                trading_day_only=False,
+            ),
+            CronTrigger(day_of_week='sat', hour='2', minute='0', timezone=TIMEZONE),
+            id='backtest_pipeline_full',
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=7200,
         )
 
     return scheduler

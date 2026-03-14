@@ -11,13 +11,17 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    BacktestDashboard: typeof import('./src/components/Backtest/BacktestDashboard.vue')['default']
+    BacktestEventDetail: typeof import('./src/components/Backtest/BacktestEventDetail.vue')['default']
     ChangeMarkTable: typeof import('./src/components/DataMonitor/ChangeMarkTable.vue')['default']
     DataMonitor: typeof import('./src/components/DataMonitor/DataMonitor.vue')['default']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElDatePicker: typeof import('element-plus/es')['ElDatePicker']
     ElDialog: typeof import('element-plus/es')['ElDialog']
+    ElDrawer: typeof import('element-plus/es')['ElDrawer']
     ElEmpty: typeof import('element-plus/es')['ElEmpty']
     ElInput: typeof import('element-plus/es')['ElInput']
+    ElInputNumber: typeof import('element-plus/es')['ElInputNumber']
     ElOption: typeof import('element-plus/es')['ElOption']
     ElPagination: typeof import('element-plus/es')['ElPagination']
     ElSelect: typeof import('element-plus/es')['ElSelect']

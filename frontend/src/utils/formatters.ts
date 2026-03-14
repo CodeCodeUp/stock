@@ -35,6 +35,20 @@ export const formatCurrency = (num: number | null | undefined): string => {
   return `${sign}¥${formatNumber(absValue)}`
 }
 
+export const formatPercentage = (
+  value: number | null | undefined,
+  digits = 2,
+  includeSign = true,
+): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return '--'
+  }
+
+  const percentage = value * 100
+  const sign = includeSign && percentage > 0 ? '+' : ''
+  return `${sign}${formatFixedNumber(percentage, digits)}%`
+}
+
 export const formatDate = (date: Date | string | null | undefined): string => {
   if (!date) {
     return '--'

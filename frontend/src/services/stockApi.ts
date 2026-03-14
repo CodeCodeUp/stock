@@ -1,9 +1,15 @@
 import axios, { AxiosError, type AxiosRequestConfig } from 'axios'
-import { API_ENDPOINTS, API_CONFIG, buildApiUrl, buildQueryString } from '@/config/api'
+import { API_CONFIG, API_ENDPOINTS, buildApiUrl, buildQueryString } from '@/config/api'
 import type {
   ApiResponse,
+  BacktestEventDetail,
+  BacktestEventItem,
+  BacktestOverview,
+  BacktestQueryParams,
+  BacktestRebuildResponse,
   ChartQueryParams,
   PageResult,
+  StockBacktestSummary,
   StockChangesParams,
   StockDataItem,
   StockDetailData,
@@ -85,5 +91,58 @@ export const fetchStockHistoryDetail = async (
   return request<StockDetailData>({
     url: `${url}?${queryString}`,
     method: 'GET',
+  })
+}
+
+export const fetchBacktestOverview = async (
+  params?: BacktestQueryParams,
+): Promise<BacktestOverview> => {
+  const url = buildApiUrl(API_ENDPOINTS.BACKTEST_OVERVIEW)
+  const queryString = params ? buildQueryString(params) : ''
+  return request<BacktestOverview>({
+    url: queryString ? `${url}?${queryString}` : url,
+    method: 'GET',
+  })
+}
+
+export const fetchBacktestEvents = async (
+  params: BacktestQueryParams,
+): Promise<PageResult<BacktestEventItem>> => {
+  const url = buildApiUrl(API_ENDPOINTS.BACKTEST_EVENTS)
+  const queryString = buildQueryString(params)
+  return request<PageResult<BacktestEventItem>>({
+    url: queryString ? `${url}?${queryString}` : url,
+    method: 'GET',
+  })
+}
+
+export const fetchBacktestEventDetail = async (
+  eventId: number,
+): Promise<BacktestEventDetail> => {
+  const url = buildApiUrl(API_ENDPOINTS.BACKTEST_EVENT_DETAIL, { eventId: String(eventId) })
+  return request<BacktestEventDetail>({
+    url,
+    method: 'GET',
+  })
+}
+
+export const fetchBacktestStockSummary = async (
+  stockCode: string,
+): Promise<StockBacktestSummary> => {
+  const url = buildApiUrl(API_ENDPOINTS.BACKTEST_STOCK_SUMMARY, { stockCode })
+  return request<StockBacktestSummary>({
+    url,
+    method: 'GET',
+  })
+}
+
+export const triggerBacktestRebuild = async (
+  mode: 'incremental' | 'full',
+): Promise<BacktestRebuildResponse> => {
+  const url = buildApiUrl(API_ENDPOINTS.BACKTEST_REBUILD)
+  const queryString = buildQueryString({ mode })
+  return request<BacktestRebuildResponse>({
+    url: queryString ? `${url}?${queryString}` : url,
+    method: 'POST',
   })
 }
